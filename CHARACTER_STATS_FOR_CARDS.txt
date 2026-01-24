@@ -1,0 +1,399 @@
+BLANK WARS - ORIGINAL 17 CHARACTER STATS
+=========================================
+
+
+
+All stats pulled from the official game database.
+
+===========================================
+ACHILLES - Hero of Troy
+===========================================
+Archetype: Warrior
+Rarity: Legendary
+Base Stats:
+- Health: 1200
+- Attack: 185  
+- Defense: 120
+- Speed: 140
+- Special: 90
+
+Detailed Abilities:
+- Strength: 95
+- Agility: 85
+- Intelligence: 60
+- Vitality: 90
+- Wisdom: 45
+- Charisma: 80
+
+Personality: Honorable, Wrathful, Courageous, Prideful
+Fighting Style: Noble and passionate
+Background: The greatest warrior of the Trojan War, nearly invincible in combat but driven by rage and honor.
+
+===========================================
+AGENT X - Mysterious Operative  
+===========================================
+Archetype: [Assassin/Spy type]
+Rarity: Rare
+Base Stats:
+- Health: 700
+- Attack: 130
+- Defense: 80
+- Speed: 170
+- Special: 85
+
+Detailed Abilities:
+- Strength: 75
+- Agility: 92
+- Intelligence: 85
+- Vitality: 70
+- Wisdom: 80
+- Charisma: 60
+
+===========================================
+BILLY THE KID - Outlaw Gunslinger
+===========================================
+Archetype: [Gunslinger/Outlaw type]
+Rarity: Uncommon
+Base Stats:
+- Health: 650
+- Attack: 140
+- Defense: 60
+- Speed: 160
+- Special: 75
+
+Detailed Abilities:
+- Strength: 65
+- Agility: 95
+- Intelligence: 55
+- Vitality: 60
+- Wisdom: 45
+- Charisma: 75
+
+===========================================
+CLEOPATRA VII - Last Pharaoh of Egypt
+===========================================
+Archetype: Leader
+Rarity: Epic
+Base Stats:
+- Health: 900
+- Attack: 80
+- Defense: 95
+- Speed: 110
+- Special: 95
+
+Detailed Abilities:
+- Strength: 50
+- Agility: 70
+- Intelligence: 95
+- Vitality: 80
+- Wisdom: 90
+- Charisma: 98
+
+Personality: Brilliant, Charismatic, Ambitious, Diplomatic
+Fighting Style: Regal and commanding
+Background: The brilliant and charismatic final pharaoh of Ancient Egypt, master of politics and ancient mysteries.
+Topics: Power, Legacy, Egyptian restoration, Politics
+
+===========================================
+COUNT DRACULA - Lord of the Undead
+===========================================
+Archetype: Mystic
+Rarity: Legendary
+Base Stats:
+- Health: 1100
+- Attack: 140
+- Defense: 110
+- Speed: 120
+- Special: 85
+
+Detailed Abilities:
+- Strength: 85
+- Agility: 80
+- Intelligence: 75
+- Vitality: 90
+- Wisdom: 70
+- Charisma: 85
+
+Personality: Aristocratic, Cunning, Predatory, Charismatic
+Fighting Style: Elegant and menacing
+Background: The immortal vampire lord of Transylvania, master of dark magic and eternal night.
+Topics: Immortality, Power, The hunt, Darkness, Aristocracy
+
+===========================================
+FENRIR - The Wolf of Ragnarok
+===========================================
+Archetype: Beast
+Rarity: Legendary
+Base Stats:
+- Health: 1400
+- Attack: 170
+- Defense: 100
+- Speed: 180
+- Special: 95
+
+Detailed Abilities:
+- Strength: 90
+- Agility: 95
+- Intelligence: 40
+- Vitality: 95
+- Wisdom: 30
+- Charisma: 50
+
+===========================================
+FRANKENSTEIN'S MONSTER - The Created Being
+===========================================
+Archetype: [Tank/Construct type]
+Rarity: Rare
+Base Stats:
+- Health: 1500
+- Attack: 160
+- Defense: 140
+- Speed: 50
+- Special: 60
+
+Detailed Abilities:
+- Strength: 98
+- Agility: 30
+- Intelligence: 65
+- Vitality: 98
+- Wisdom: 60
+- Charisma: 25
+
+===========================================
+GENGHIS KHAN - Great Khan
+===========================================
+Archetype: Leader
+Rarity: Legendary
+Base Stats:
+- Health: 1100
+- Attack: 155
+- Defense: 105
+- Speed: 130
+- Special: 92
+
+Detailed Abilities:
+- Strength: 88
+- Agility: 80
+- Intelligence: 90
+- Vitality: 85
+- Wisdom: 85
+- Charisma: 92
+
+Personality: Ruthless, Strategic, Ambitious, Unifying
+Fighting Style: Commanding and direct
+Background: The Great Khan who united the Mongol tribes and built the largest contiguous empire in history.
+Topics: Conquest, Unity, Strategy, Empire, Legacy
+
+===========================================
+JOAN OF ARC - Maid of Orléans
+===========================================
+Archetype: [Holy Warrior type]
+Rarity: Epic
+Base Stats:
+- Health: 1000
+- Attack: 130
+- Defense: 120
+- Speed: 100
+- Special: 88
+
+Detailed Abilities:
+- Strength: 80
+- Agility: 75
+- Intelligence: 70
+- Vitality: 85
+- Wisdom: 90
+- Charisma: 95
+
+===========================================
+MERLIN - The Great Wizard
+===========================================
+Archetype: [Wizard/Mage type]
+Rarity: Mythic
+Base Stats:
+- Health: 800
+- Attack: 60
+- Defense: 80
+- Speed: 90
+- Special: 100
+
+Detailed Abilities:
+- Strength: 30
+- Agility: 50
+- Intelligence: 98
+- Vitality: 70
+- Wisdom: 95
+- Charisma: 85
+
+===========================================
+ROBIN HOOD - The Outlaw of Sherwood
+===========================================
+Archetype: [Archer/Outlaw type]
+Rarity: Rare
+Base Stats:
+- Health: 800
+- Attack: 120
+- Defense: 75
+- Speed: 150
+- Special: 80
+
+Detailed Abilities:
+- Strength: 70
+- Agility: 90
+- Intelligence: 75
+- Vitality: 70
+- Wisdom: 65
+- Charisma: 85
+
+===========================================
+SAMMY "SLUGGER" SULLIVAN - Baseball Hero
+===========================================
+Archetype: [Athlete/Sports type]
+Rarity: Uncommon
+Base Stats:
+- Health: 950
+- Attack: 160
+- Defense: 85
+- Speed: 120
+- Special: 65
+
+Detailed Abilities:
+- Strength: 85
+- Agility: 80
+- Intelligence: 50
+- Vitality: 85
+- Wisdom: 55
+- Charisma: 75
+
+===========================================
+SHERLOCK HOLMES - Master Detective
+===========================================
+Archetype: [Detective/Scholar type]
+Rarity: Rare
+Base Stats:
+- Health: 700
+- Attack: 70
+- Defense: 60
+- Speed: 85
+- Special: 98
+
+Detailed Abilities:
+- Strength: 40
+- Agility: 60
+- Intelligence: 98
+- Vitality: 55
+- Wisdom: 85
+- Charisma: 70
+
+===========================================
+SPACE CYBORG - Technological Warrior
+===========================================
+Archetype: [Cyborg/Tech type]
+Rarity: Epic
+Base Stats:
+- Health: 1300
+- Attack: 145
+- Defense: 160
+- Speed: 70
+- Special: 75
+
+Detailed Abilities:
+- Strength: 90
+- Agility: 50
+- Intelligence: 80
+- Vitality: 95
+- Wisdom: 60
+- Charisma: 40
+
+===========================================
+SUN WUKONG - The Monkey King
+===========================================
+Archetype: Trickster
+Rarity: Mythic
+Base Stats:
+- Health: 1000
+- Attack: 150
+- Defense: 90
+- Speed: 200
+- Special: 95
+
+Detailed Abilities:
+- Strength: 90
+- Agility: 98
+- Intelligence: 80
+- Vitality: 85
+- Wisdom: 75
+- Charisma: 80
+
+Personality: Mischievous, Rebellious, Loyal, Proud
+Fighting Style: Playful and irreverent
+Background: The immortal Monkey King, master of 72 transformations and legendary troublemaker of Heaven.
+Topics: Freedom, Mischief, Immortality, Adventure, Rebellion
+
+===========================================
+NIKOLA TESLA - Master Inventor
+===========================================
+Archetype: [Inventor/Scientist type]
+Rarity: Epic
+Base Stats:
+- Health: 750
+- Attack: 85
+- Defense: 70
+- Speed: 90
+- Special: 100
+
+Detailed Abilities:
+- Strength: 45
+- Agility: 60
+- Intelligence: 98
+- Vitality: 65
+- Wisdom: 80
+- Charisma: 70
+
+===========================================
+ZETA RETICULAN (Zeta) - Alien Being
+===========================================
+Archetype: [Alien/Psychic type]
+Rarity: Rare
+Base Stats:
+- Health: 600
+- Attack: 75
+- Defense: 85
+- Speed: 110
+- Special: 95
+
+Detailed Abilities:
+- Strength: 35
+- Agility: 70
+- Intelligence: 95
+- Vitality: 50
+- Wisdom: 90
+- Charisma: 40
+
+===========================================
+
+NOTES FOR CARD CREATION:
+===========================================
+
+STAT EXPLANATION:
+- Base Stats are the primary combat stats used in battles
+- Detailed Abilities are the core character attributes that define their nature
+- All stats range from roughly 30-200 depending on the character's focus
+- Higher rarity characters generally have higher total stat values
+
+ARCHETYPE MEANINGS:
+- Warrior: Melee combat specialists
+- Leader: Command and inspire others  
+- Mystic: Magic and supernatural powers
+- Trickster: Agile and unpredictable
+- Beast: Raw physical power and instinct
+- Plus various specialized archetypes for unique characters
+
+RARITY LEVELS (in order):
+1. Common (basic characters)
+2. Uncommon (Billy the Kid, Sam Spade)
+3. Rare (Agent X, Frankenstein, Robin Hood, Holmes, Zeta)
+4. Epic (Cleopatra, Joan of Arc, Space Cyborg, Tesla)
+5. Legendary (Achilles, Dracula, Fenrir, Genghis Khan)
+6. Mythic (Merlin, Sun Wukong) - highest tier
+
+All data pulled directly from the official Blank Wars PostgreSQL database on September 7, 2025.

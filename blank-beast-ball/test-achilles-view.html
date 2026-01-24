@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Achilles Model Test</title>
+    <style>
+        body { margin: 0; }
+        canvas { display: block; }
+        #info {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: white;
+            background: rgba(0,0,0,0.7);
+            padding: 10px;
+            font-family: monospace;
+        }
+    </style>
+</head>
+<body>
+    <div id="info">Loading...</div>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/loaders/GLTFLoader.js"></script>
+    <script>
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x87CEEB);
+
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+
+        const renderer = new THREE.WebGLRenderer();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+
+        // Add grid helper
+        const gridHelper = new THREE.GridHelper(20, 20);
+        scene.add(gridHelper);
+
+        // Add axes helper
+        const axesHelper = new THREE.AxesHelper(5);
+        scene.add(axesHelper);
+
+        // Add a reference cube at origin
+        const cubeGeometry = new THREE.BoxGeometry(0.5, 0.5, 0.5);
+        const cubeMaterial = new THREE.MeshBasicMaterial({ color: 0xff0000, wireframe: true });
+        const cube = new THREE.Mesh(cubeGeometry, cubeMaterial);
+        scene.add(cube);
+
+        // Add lighting
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+        scene.add(ambientLight);
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+        directionalLight.position.set(5, 10, 5);
+        scene.add(directionalLight);
+
+        // Load the model
+        let mixer;
+        const clock = new THREE.Clock();
+        let player;
+        const moveSpeed = 0.1;
+        const keys = {};
+        let idleAction, runAction;
+        let currentAction = 'idle';
+        let cameraAngle = 0; // Track camera rotation angle
+
+        // Keyboard controls
+        document.addEventListener('keydown', (e) => {
+            keys[e.key.toLowerCase()] = true;
+        });
+        document.addEventListener('keyup', (e) => {
+            keys[e.key.toLowerCase()] = false;
+        });
+
+        const loader = new THREE.GLTFLoader();
+
+        // Load idle animation (V4 with texture preservation through rigging)
+        loader.load('models/achilles_v4_idle.glb', (gltf) => {
+            const model = gltf.scene;
+
+            // Get original bounding box
+            const box = new THREE.Box3().setFromObject(model);
+            const size = box.getSize(new THREE.Vector3());
+            const center = box.getCenter(new THREE.Vector3());
+
+            console.log('Original size:', size);
+            console.log('Original center:', center);
+
+            // Try very small scale
+            const scaleFactor = 5;
+            model.scale.set(scaleFactor, scaleFactor, scaleFactor);
+
+            // Check size after scaling
+            const boxScaled = new THREE.Box3().setFromObject(model);
+            const sizeScaled = boxScaled.getSize(new THREE.Vector3());
+            const centerScaled = boxScaled.getCenter(new THREE.Vector3());
+
+            console.log('Scaled size:', sizeScaled);
+            console.log('Scaled center:', centerScaled);
+
+            // Position at origin first
+            model.position.set(0, 0, 0);
+            model.rotation.y = Math.PI; // Rotate 180 degrees to face away from camera
+
+            scene.add(model);
+            player = model;
+
+            // Setup idle animation (but don't play it - character stands still when idle)
+            if (gltf.animations && gltf.animations.length > 0) {
+                mixer = new THREE.AnimationMixer(model);
+                idleAction = mixer.clipAction(gltf.animations[0]);
+                idleAction.timeScale = 0; // Freeze on first frame
+                idleAction.play();
+                console.log('Idle animation loaded (frozen)');
+            }
+
+            // Load run animation (V4 with texture preservation through rigging)
+            loader.load('models/achilles_v4_run.glb', (runGltf) => {
+                if (runGltf.animations && runGltf.animations.length > 0) {
+                    runAction = mixer.clipAction(runGltf.animations[0]);
+                    console.log('Run animation loaded');
+                }
+            });
+
+            document.getElementById('info').innerHTML = `
+                <strong>Achilles V4 - ANIMATED WITH TEXTURES!</strong><br>
+                Original: ${size.x.toFixed(3)} x ${size.y.toFixed(3)} x ${size.z.toFixed(3)}<br>
+                Scaled (${scaleFactor}x): ${sizeScaled.x.toFixed(3)} x ${sizeScaled.y.toFixed(3)} x ${sizeScaled.z.toFixed(3)}<br>
+                Center: ${centerScaled.x.toFixed(3)}, ${centerScaled.y.toFixed(3)}, ${centerScaled.z.toFixed(3)}<br>
+                Animations: ${gltf.animations.length}<br>
+                <br>
+                Controls: WASD/Arrows = Move, Q/E = Rotate Camera<br>
+                Used texture_image_url in rigging to preserve textures!
+            `;
+        });
+
+        // Position camera to match game (distance 15, height 8)
+        camera.position.set(0, 8, 15);
+        camera.lookAt(0, 1, 0);
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            // Update animation mixer
+            if (mixer) {
+                const delta = clock.getDelta();
+                mixer.update(delta);
+            }
+
+            // Handle camera rotation
+            if (keys['q']) {
+                cameraAngle -= 0.02;
+            }
+            if (keys['e']) {
+                cameraAngle += 0.02;
+            }
+
+            // Handle movement
+            if (player) {
+                let moving = false;
+
+                if (keys['w'] || keys['arrowup']) {
+                    player.position.z -= moveSpeed;
+                    moving = true;
+                }
+                if (keys['s'] || keys['arrowdown']) {
+                    player.position.z += moveSpeed;
+                    moving = true;
+                }
+                if (keys['a'] || keys['arrowleft']) {
+                    player.position.x -= moveSpeed;
+                    moving = true;
+                }
+                if (keys['d'] || keys['arrowright']) {
+                    player.position.x += moveSpeed;
+                    moving = true;
+                }
+
+                // Switch between idle and run animations
+                if (idleAction && runAction) {
+                    if (moving && currentAction === 'idle') {
+                        // Switch to run
+                        idleAction.fadeOut(0.2);
+                        runAction.reset().fadeIn(0.2).play();
+                        currentAction = 'run';
+                    } else if (!moving && currentAction === 'run') {
+                        // Switch to idle (frozen pose)
+                        runAction.fadeOut(0.2);
+                        idleAction.timeScale = 0;
+                        idleAction.reset().fadeIn(0.2).play();
+                        currentAction = 'idle';
+                    }
+                }
+
+                // Update camera to orbit around player
+                const cameraDistance = 15;
+                const cameraHeight = 8;
+                camera.position.x = player.position.x + Math.sin(cameraAngle) * cameraDistance;
+                camera.position.y = player.position.y + cameraHeight;
+                camera.position.z = player.position.z + Math.cos(cameraAngle) * cameraDistance;
+                camera.lookAt(player.position.x, player.position.y + 1, player.position.z);
+            }
+
+            renderer.render(scene, camera);
+        }
+        animate();
+    </script>
+</body>
+</html>

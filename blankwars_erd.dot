@@ -1,0 +1,799 @@
+digraph BlankWarsERD {
+  rankdir=LR;
+  node [shape=plaintext];
+  edge [color="#666666"];
+
+  active_challenges [label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white">
+      <TR><TD BGCOLOR="#4A90E2" ALIGN="CENTER"><FONT COLOR="white"><B>active_challenges</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="id">id 🔑 : uuid</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="challenge_template_id">challenge_template_id : uuid</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="user_id">user_id : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="status">status : character varying</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="registration_deadline">registration_deadline : timestamp with time zone</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="start_time">start_time : timestamp with time zone</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="end_time">end_time : timestamp with time zone</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="game_state">game_state : jsonb</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="created_at">created_at : timestamp with time zone</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="updated_at">updated_at : timestamp with time zone</TD></TR>
+    </TABLE>
+  >];
+
+  battles [label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white">
+      <TR><TD BGCOLOR="#4A90E2" ALIGN="CENTER"><FONT COLOR="white"><B>battles</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="id">id 🔑 : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="user1_id">user1_id : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="user2_id">user2_id : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="user_character1_id">user_character1_id : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="user_character2_id">user_character2_id : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="status">status : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="current_round">current_round : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="turn_count">turn_count : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="p1_strategy">p1_strategy : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="p2_strategy">p2_strategy : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="winner_id">winner_id : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="end_reason">end_reason : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="combat_log">combat_log : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="chat_logs">chat_logs : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="xp_gained">xp_gained : integer</TD></TR>
+      <TR><TD ALIGN="LEFT">...</TD></TR>
+    </TABLE>
+  >];
+
+  card_packs [label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white">
+      <TR><TD BGCOLOR="#4A90E2" ALIGN="CENTER"><FONT COLOR="white"><B>card_packs</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="id">id 🔑 : uuid</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="name">name : character varying</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="description">description : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="pack_type">pack_type : character varying</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="guaranteed_contents">guaranteed_contents : jsonb</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="possible_contents">possible_contents : jsonb</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="total_cards">total_cards : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="rarity_weights">rarity_weights : jsonb</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="cost_credits">cost_credits : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="cost_real_money">cost_real_money : numeric</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="is_purchasable">is_purchasable : boolean</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="requires_level">requires_level : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="available_from">available_from : timestamp without time zone</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="available_until">available_until : timestamp without time zone</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="max_purchases_per_user">max_purchases_per_user : integer</TD></TR>
+      <TR><TD ALIGN="LEFT">...</TD></TR>
+    </TABLE>
+  >];
+
+  challenge_alliances [label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white">
+      <TR><TD BGCOLOR="#4A90E2" ALIGN="CENTER"><FONT COLOR="white"><B>challenge_alliances</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="id">id 🔑 : uuid</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="active_challenge_id">active_challenge_id : uuid</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="alliance_name">alliance_name : character varying</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="leader_character_id">leader_character_id : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="member_character_ids">member_character_ids : ARRAY</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="is_active">is_active : boolean</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="formed_at">formed_at : timestamp with time zone</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="dissolved_at">dissolved_at : timestamp with time zone</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="created_at">created_at : timestamp with time zone</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="updated_at">updated_at : timestamp with time zone</TD></TR>
+    </TABLE>
+  >];
+
+  challenge_leaderboard [label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white">
+      <TR><TD BGCOLOR="#4A90E2" ALIGN="CENTER"><FONT COLOR="white"><B>challenge_leaderboard</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="id">id 🔑 : uuid</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="user_character_id">user_character_id : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="total_challenges_entered">total_challenges_entered : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="total_challenges_won">total_challenges_won : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="total_top_3_finishes">total_top_3_finishes : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="wins_by_type">wins_by_type : jsonb</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="total_currency_earned">total_currency_earned : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="total_items_won">total_items_won : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="current_win_streak">current_win_streak : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="best_win_streak">best_win_streak : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="overall_rank">overall_rank : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="elo_rating">elo_rating : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="created_at">created_at : timestamp with time zone</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="updated_at">updated_at : timestamp with time zone</TD></TR>
+    </TABLE>
+  >];
+
+  challenge_participants [label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white">
+      <TR><TD BGCOLOR="#4A90E2" ALIGN="CENTER"><FONT COLOR="white"><B>challenge_participants</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="id">id 🔑 : uuid</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="active_challenge_id">active_challenge_id : uuid</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="user_character_id">user_character_id : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="registration_time">registration_time : timestamp with time zone</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="team_assignment">team_assignment : character varying</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="performance_metrics">performance_metrics : jsonb</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="final_score">final_score : numeric</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="placement">placement : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="is_eliminated">is_eliminated : boolean</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="elimination_time">elimination_time : timestamp with time zone</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="created_at">created_at : timestamp with time zone</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="updated_at">updated_at : timestamp with time zone</TD></TR>
+    </TABLE>
+  >];
+
+  challenge_results [label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white">
+      <TR><TD BGCOLOR="#4A90E2" ALIGN="CENTER"><FONT COLOR="white"><B>challenge_results</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="id">id 🔑 : uuid</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="active_challenge_id">active_challenge_id : uuid</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="challenge_template_id">challenge_template_id : uuid</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="winner_character_id">winner_character_id : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="second_place_character_id">second_place_character_id : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="third_place_character_id">third_place_character_id : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="total_participants">total_participants : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="completion_time_minutes">completion_time_minutes : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="full_results">full_results : jsonb</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="highlight_moments">highlight_moments : ARRAY</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="total_rewards_given">total_rewards_given : jsonb</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="completed_at">completed_at : timestamp with time zone</TD></TR>
+    </TABLE>
+  >];
+
+  challenge_rewards [label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white">
+      <TR><TD BGCOLOR="#4A90E2" ALIGN="CENTER"><FONT COLOR="white"><B>challenge_rewards</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="id">id 🔑 : uuid</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="challenge_template_id">challenge_template_id : uuid</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="reward_type">reward_type : character varying</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="reward_config">reward_config : jsonb</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="placement_required">placement_required : character varying</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="is_guaranteed">is_guaranteed : boolean</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="probability">probability : numeric</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="created_at">created_at : timestamp with time zone</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="updated_at">updated_at : timestamp with time zone</TD></TR>
+    </TABLE>
+  >];
+
+  challenge_templates [label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white">
+      <TR><TD BGCOLOR="#4A90E2" ALIGN="CENTER"><FONT COLOR="white"><B>challenge_templates</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="id">id 🔑 : uuid</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="name">name : character varying</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="description">description : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="challenge_type">challenge_type : character varying</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="min_participants">min_participants : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="max_participants">max_participants : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="requires_team">requires_team : boolean</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="mechanics">mechanics : jsonb</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="difficulty">difficulty : character varying</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="estimated_duration_minutes">estimated_duration_minutes : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="reality_show_parody">reality_show_parody : character varying</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="theme_tags">theme_tags : ARRAY</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="base_currency_reward">base_currency_reward : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="reward_scaling">reward_scaling : jsonb</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="is_active">is_active : boolean</TD></TR>
+      <TR><TD ALIGN="LEFT">...</TD></TR>
+    </TABLE>
+  >];
+
+  character_abilities [label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white">
+      <TR><TD BGCOLOR="#4A90E2" ALIGN="CENTER"><FONT COLOR="white"><B>character_abilities</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="id">id 🔑 : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="character_id">character_id : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="ability_id">ability_id : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="ability_name">ability_name : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="rank">rank : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="max_rank">max_rank : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="unlocked">unlocked : boolean</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="unlocked_at">unlocked_at : timestamp without time zone</TD></TR>
+    </TABLE>
+  >];
+
+  character_experience_log [label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white">
+      <TR><TD BGCOLOR="#4A90E2" ALIGN="CENTER"><FONT COLOR="white"><B>character_experience_log</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="id">id 🔑 : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="character_id">character_id : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="source">source : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="amount">amount : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="multiplier">multiplier : numeric</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="description">description : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="timestamp">timestamp : timestamp without time zone</TD></TR>
+    </TABLE>
+  >];
+
+  character_healing_sessions [label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white">
+      <TR><TD BGCOLOR="#4A90E2" ALIGN="CENTER"><FONT COLOR="white"><B>character_healing_sessions</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="id">id 🔑 : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="character_id">character_id : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="facility_id">facility_id : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="session_type">session_type : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="start_time">start_time : timestamp without time zone</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="estimated_completion_time">estimated_completion_time : timestamp without time zone</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="currency_paid">currency_paid : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="premium_paid">premium_paid : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="is_active">is_active : boolean</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="is_completed">is_completed : boolean</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="created_at">created_at : timestamp without time zone</TD></TR>
+    </TABLE>
+  >];
+
+  character_living_context [label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white">
+      <TR><TD BGCOLOR="#4A90E2" ALIGN="CENTER"><FONT COLOR="white"><B>character_living_context</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="id">id 🔑 : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="character_id">character_id : character varying</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="team_id">team_id : character varying</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="sleeps_on_floor">sleeps_on_floor : boolean</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="sleeps_on_couch">sleeps_on_couch : boolean</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="sleeps_under_table">sleeps_under_table : boolean</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="room_overcrowded">room_overcrowded : boolean</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="floor_sleeper_count">floor_sleeper_count : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="roommate_count">roommate_count : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="current_mood">current_mood : character varying</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="current_energy_level">current_energy_level : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="last_sleep_quality">last_sleep_quality : character varying</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="created_at">created_at : timestamp without time zone</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="updated_at">updated_at : timestamp without time zone</TD></TR>
+    </TABLE>
+  >];
+
+  character_memories [label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white">
+      <TR><TD BGCOLOR="#4A90E2" ALIGN="CENTER"><FONT COLOR="white"><B>character_memories</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="id">id 🔑 : character varying</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="character_id">character_id : character varying</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="event_id">event_id : character varying</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="content">content : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="emotion_type">emotion_type : character varying</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="intensity">intensity : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="valence">valence : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="importance">importance : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="created_at">created_at : timestamp with time zone</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="last_recalled">last_recalled : timestamp with time zone</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="recall_count">recall_count : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="associated_characters">associated_characters : ARRAY</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="tags">tags : ARRAY</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="decay_rate">decay_rate : numeric</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="chat_context">chat_context : jsonb</TD></TR>
+      <TR><TD ALIGN="LEFT">...</TD></TR>
+    </TABLE>
+  >];
+
+  character_progression [label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white">
+      <TR><TD BGCOLOR="#4A90E2" ALIGN="CENTER"><FONT COLOR="white"><B>character_progression</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="character_id">character_id 🔑 : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="stat_points">stat_points : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="skill_points">skill_points : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="ability_points">ability_points : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="tier">tier : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="title">title : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="last_updated">last_updated : timestamp without time zone</TD></TR>
+    </TABLE>
+  >];
+
+  character_skills [label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white">
+      <TR><TD BGCOLOR="#4A90E2" ALIGN="CENTER"><FONT COLOR="white"><B>character_skills</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="id">id 🔑 : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="character_id">character_id : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="skill_id">skill_id : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="skill_name">skill_name : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="level">level : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="experience">experience : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="max_level">max_level : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="unlocked">unlocked : boolean</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="last_updated">last_updated : timestamp without time zone</TD></TR>
+    </TABLE>
+  >];
+
+  characters [label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white">
+      <TR><TD BGCOLOR="#4A90E2" ALIGN="CENTER"><FONT COLOR="white"><B>characters</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="id">id 🔑 : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="name">name : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="title">title : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="archetype">archetype : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="origin_era">origin_era : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="rarity">rarity : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="base_health">base_health : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="base_attack">base_attack : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="base_defense">base_defense : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="base_speed">base_speed : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="base_special">base_special : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="personality_traits">personality_traits : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="conversation_style">conversation_style : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="backstory">backstory : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="conversation_topics">conversation_topics : text</TD></TR>
+      <TR><TD ALIGN="LEFT">...</TD></TR>
+    </TABLE>
+  >];
+
+  chat_messages [label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white">
+      <TR><TD BGCOLOR="#4A90E2" ALIGN="CENTER"><FONT COLOR="white"><B>chat_messages</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="id">id 🔑 : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="user_id">user_id : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="character_id">character_id : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="battle_id">battle_id : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="player_message">player_message : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="character_response">character_response : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="message_context">message_context : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="model_used">model_used : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="tokens_used">tokens_used : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="response_time_ms">response_time_ms : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="bond_increase">bond_increase : boolean</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="memory_saved">memory_saved : boolean</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="created_at">created_at : timestamp without time zone</TD></TR>
+    </TABLE>
+  >];
+
+  chat_sessions [label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white">
+      <TR><TD BGCOLOR="#4A90E2" ALIGN="CENTER"><FONT COLOR="white"><B>chat_sessions</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="chat_id">chat_id 🔑 : character varying</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="current_turn_count">current_turn_count : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="created_at">created_at : timestamp without time zone</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="updated_at">updated_at : timestamp without time zone</TD></TR>
+    </TABLE>
+  >];
+
+  claimable_pack_contents [label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white">
+      <TR><TD BGCOLOR="#4A90E2" ALIGN="CENTER"><FONT COLOR="white"><B>claimable_pack_contents</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="id">id 🔑 : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="claimable_pack_id">claimable_pack_id : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="character_id">character_id : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="created_at">created_at : timestamp without time zone</TD></TR>
+    </TABLE>
+  >];
+
+  claimable_packs [label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white">
+      <TR><TD BGCOLOR="#4A90E2" ALIGN="CENTER"><FONT COLOR="white"><B>claimable_packs</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="id">id 🔑 : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="pack_type">pack_type : character varying</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="is_claimed">is_claimed : boolean</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="claimed_by_user_id">claimed_by_user_id : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="claimed_at">claimed_at : timestamp without time zone</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="created_at">created_at : timestamp without time zone</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="user_id">user_id : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="pack_id">pack_id : text</TD></TR>
+    </TABLE>
+  >];
+
+  coach_progression [label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white">
+      <TR><TD BGCOLOR="#4A90E2" ALIGN="CENTER"><FONT COLOR="white"><B>coach_progression</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="user_id">user_id 🔑 : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="coach_level">coach_level : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="coach_experience">coach_experience : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="coach_title">coach_title : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="psychology_skill_points">psychology_skill_points : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="battle_strategy_skill_points">battle_strategy_skill_points : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="character_development_skill_points">character_development_skill_points : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="total_battles_coached">total_battles_coached : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="total_wins_coached">total_wins_coached : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="psychology_interventions">psychology_interventions : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="successful_interventions">successful_interventions : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="gameplan_adherence_rate">gameplan_adherence_rate : real</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="team_chemistry_improvements">team_chemistry_improvements : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="character_developments">character_developments : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="created_at">created_at : timestamp without time zone</TD></TR>
+      <TR><TD ALIGN="LEFT">...</TD></TR>
+    </TABLE>
+  >];
+
+  coach_skills [label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white">
+      <TR><TD BGCOLOR="#4A90E2" ALIGN="CENTER"><FONT COLOR="white"><B>coach_skills</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="id">id 🔑 : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="user_id">user_id : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="skill_tree">skill_tree : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="skill_name">skill_name : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="skill_level">skill_level : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="unlocked_at">unlocked_at : timestamp without time zone</TD></TR>
+    </TABLE>
+  >];
+
+  coach_xp_events [label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white">
+      <TR><TD BGCOLOR="#4A90E2" ALIGN="CENTER"><FONT COLOR="white"><B>coach_xp_events</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="id">id 🔑 : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="user_id">user_id : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="event_type">event_type : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="event_subtype">event_subtype : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="xp_gained">xp_gained : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="description">description : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="battle_id">battle_id : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="character_id">character_id : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="created_at">created_at : timestamp without time zone</TD></TR>
+    </TABLE>
+  >];
+
+  cron_logs [label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white">
+      <TR><TD BGCOLOR="#4A90E2" ALIGN="CENTER"><FONT COLOR="white"><B>cron_logs</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="id">id 🔑 : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="job_type">job_type : character varying</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="success_count">success_count : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="error_count">error_count : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="duration_ms">duration_ms : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="description">description : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="metadata">metadata : jsonb</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="error_message">error_message : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="executed_at">executed_at : timestamp with time zone</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="created_at">created_at : timestamp with time zone</TD></TR>
+    </TABLE>
+  >];
+
+  events [label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white">
+      <TR><TD BGCOLOR="#4A90E2" ALIGN="CENTER"><FONT COLOR="white"><B>events</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="id">id 🔑 : bigint</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="session_id">session_id : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="type">type : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="actor">actor : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="target">target : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="payload">payload : jsonb</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="ts">ts : timestamp with time zone</TD></TR>
+    </TABLE>
+  >];
+
+  facts [label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white">
+      <TR><TD BGCOLOR="#4A90E2" ALIGN="CENTER"><FONT COLOR="white"><B>facts</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="id">id 🔑 : bigint</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="session_id">session_id : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="type">type : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="key">key : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="value">value : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="status">status : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="started_at">started_at : timestamp with time zone</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="updated_at">updated_at : timestamp with time zone</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="resolved_at">resolved_at : timestamp with time zone</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="expires_at">expires_at : timestamp with time zone</TD></TR>
+    </TABLE>
+  >];
+
+  financial_decisions [label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white">
+      <TR><TD BGCOLOR="#4A90E2" ALIGN="CENTER"><FONT COLOR="white"><B>financial_decisions</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="id">id 🔑 : uuid</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="user_character_id">user_character_id : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="decision_type">decision_type : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="amount_cents">amount_cents : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="payment_method">payment_method : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="wallet_delta_cents">wallet_delta_cents : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="debt_delta_cents">debt_delta_cents : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="description">description : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="metadata">metadata : jsonb</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="created_at">created_at : timestamp with time zone</TD></TR>
+    </TABLE>
+  >];
+
+  game_events [label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white">
+      <TR><TD BGCOLOR="#4A90E2" ALIGN="CENTER"><FONT COLOR="white"><B>game_events</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="id">id 🔑 : character varying</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="type">type : character varying</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="source">source : character varying</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="primary_character_id">primary_character_id : character varying</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="secondary_character_ids">secondary_character_ids : ARRAY</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="severity">severity : character varying</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="category">category : character varying</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="description">description : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="metadata">metadata : jsonb</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="tags">tags : ARRAY</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="importance">importance : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="timestamp">timestamp : timestamp with time zone</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="created_at">created_at : timestamp with time zone</TD></TR>
+    </TABLE>
+  >];
+
+  headquarters_rooms [label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white">
+      <TR><TD BGCOLOR="#4A90E2" ALIGN="CENTER"><FONT COLOR="white"><B>headquarters_rooms</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="id">id 🔑 : uuid</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="headquarters_id">headquarters_id : uuid</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="room_id">room_id : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="room_type">room_type : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="capacity">capacity : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="occupied_slots">occupied_slots : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="theme">theme : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="furniture">furniture : jsonb</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="position_x">position_x : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="position_y">position_y : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="width">width : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="height">height : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="created_at">created_at : timestamp without time zone</TD></TR>
+    </TABLE>
+  >];
+
+  healing_facilities [label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white">
+      <TR><TD BGCOLOR="#4A90E2" ALIGN="CENTER"><FONT COLOR="white"><B>healing_facilities</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="id">id 🔑 : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="name">name : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="facility_type">facility_type : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="healing_rate_multiplier">healing_rate_multiplier : numeric</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="currency_cost_per_hour">currency_cost_per_hour : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="premium_cost_per_hour">premium_cost_per_hour : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="max_injury_severity">max_injury_severity : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="headquarters_tier_required">headquarters_tier_required : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="description">description : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="created_at">created_at : timestamp without time zone</TD></TR>
+    </TABLE>
+  >];
+
+  memory_entries [label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white">
+      <TR><TD BGCOLOR="#4A90E2" ALIGN="CENTER"><FONT COLOR="white"><B>memory_entries</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="id">id 🔑 : uuid</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="character_id">character_id : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="session_id">session_id : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="key">key : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="value">value : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="created_at">created_at : timestamp with time zone</TD></TR>
+    </TABLE>
+  >];
+
+  migration_log [label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white">
+      <TR><TD BGCOLOR="#4A90E2" ALIGN="CENTER"><FONT COLOR="white"><B>migration_log</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="id">id 🔑 : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="version">version : character varying</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="description">description : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="executed_at">executed_at : timestamp without time zone</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="execution_time_ms">execution_time_ms : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="rollback_sql">rollback_sql : text</TD></TR>
+    </TABLE>
+  >];
+
+  migration_meta [label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white">
+      <TR><TD BGCOLOR="#4A90E2" ALIGN="CENTER"><FONT COLOR="white"><B>migration_meta</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="key">key 🔑 : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="value">value : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="applied_at">applied_at : timestamp with time zone</TD></TR>
+    </TABLE>
+  >];
+
+  scene_triggers [label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white">
+      <TR><TD BGCOLOR="#4A90E2" ALIGN="CENTER"><FONT COLOR="white"><B>scene_triggers</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="id">id 🔑 : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="scene_type">scene_type : character varying</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="hq_tier">hq_tier : character varying</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="trigger_text">trigger_text : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="weight">weight : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="domain">domain : character varying</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="created_at">created_at : timestamp without time zone</TD></TR>
+    </TABLE>
+  >];
+
+  session_state [label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white">
+      <TR><TD BGCOLOR="#4A90E2" ALIGN="CENTER"><FONT COLOR="white"><B>session_state</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="sid">sid 🔑 : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="character_id">character_id : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="user_id">user_id : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="session_flags">session_flags : jsonb</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="short_context">short_context : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="last_user_intent">last_user_intent : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="slots">slots : jsonb</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="short_tool_result">short_tool_result : jsonb</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="digest_id">digest_id : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="schema_version">schema_version : smallint</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="ts_updated">ts_updated : timestamp with time zone</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="payload">payload : jsonb</TD></TR>
+    </TABLE>
+  >];
+
+  state_digest [label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white">
+      <TR><TD BGCOLOR="#4A90E2" ALIGN="CENTER"><FONT COLOR="white"><B>state_digest</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="session_id">session_id 🔑 : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="text">text : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="version">version : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="token_count">token_count : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="updated_at">updated_at : timestamp with time zone</TD></TR>
+    </TABLE>
+  >];
+
+  team_context [label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white">
+      <TR><TD BGCOLOR="#4A90E2" ALIGN="CENTER"><FONT COLOR="white"><B>team_context</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="id">id 🔑 : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="team_id">team_id : character varying</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="hq_tier">hq_tier : character varying</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="current_scene_type">current_scene_type : character varying</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="current_time_of_day">current_time_of_day : character varying</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="created_at">created_at : timestamp without time zone</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="updated_at">updated_at : timestamp without time zone</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="active_teammates">active_teammates : ARRAY</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="master_bed_character_id">master_bed_character_id : character varying</TD></TR>
+    </TABLE>
+  >];
+
+  tmp_user_characters_backup [label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white">
+      <TR><TD BGCOLOR="#4A90E2" ALIGN="CENTER"><FONT COLOR="white"><B>tmp_user_characters_backup</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="id">id : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="user_id">user_id : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="character_id">character_id : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="serial_number">serial_number : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="nickname">nickname : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="level">level : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="experience">experience : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="bond_level">bond_level : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="total_battles">total_battles : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="total_wins">total_wins : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="current_health">current_health : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="max_health">max_health : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="is_injured">is_injured : boolean</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="injury_severity">injury_severity : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="is_dead">is_dead : boolean</TD></TR>
+      <TR><TD ALIGN="LEFT">...</TD></TR>
+    </TABLE>
+  >];
+
+  user_characters [label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white">
+      <TR><TD BGCOLOR="#4A90E2" ALIGN="CENTER"><FONT COLOR="white"><B>user_characters</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="id">id 🔑 : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="user_id">user_id : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="character_id">character_id : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="serial_number">serial_number : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="nickname">nickname : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="level">level : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="experience">experience : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="bond_level">bond_level : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="total_battles">total_battles : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="total_wins">total_wins : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="current_health">current_health : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="max_health">max_health : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="is_injured">is_injured : boolean</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="injury_severity">injury_severity : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="is_dead">is_dead : boolean</TD></TR>
+      <TR><TD ALIGN="LEFT">...</TD></TR>
+    </TABLE>
+  >];
+
+  user_currency [label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white">
+      <TR><TD BGCOLOR="#4A90E2" ALIGN="CENTER"><FONT COLOR="white"><B>user_currency</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="user_id">user_id 🔑 : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="battle_tokens">battle_tokens : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="premium_currency">premium_currency : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="last_updated">last_updated : timestamp without time zone</TD></TR>
+    </TABLE>
+  >];
+
+  user_daily_stats [label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white">
+      <TR><TD BGCOLOR="#4A90E2" ALIGN="CENTER"><FONT COLOR="white"><B>user_daily_stats</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="user_id">user_id 🔑 : character varying</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="date">date 🔑 : date</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="daily_turn_count">daily_turn_count : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="xp_earned">xp_earned : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="created_at">created_at : timestamp without time zone</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="updated_at">updated_at : timestamp without time zone</TD></TR>
+    </TABLE>
+  >];
+
+  user_equipment [label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white">
+      <TR><TD BGCOLOR="#4A90E2" ALIGN="CENTER"><FONT COLOR="white"><B>user_equipment</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="id">id 🔑 : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="user_id">user_id : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="equipment_id">equipment_id : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="is_equipped">is_equipped : boolean</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="equipped_to_character_id">equipped_to_character_id : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="current_level">current_level : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="enhancement_level">enhancement_level : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="custom_stats">custom_stats : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="acquired_at">acquired_at : timestamp without time zone</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="acquired_from">acquired_from : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="purchase_price">purchase_price : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="created_at">created_at : timestamp without time zone</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="updated_at">updated_at : timestamp without time zone</TD></TR>
+    </TABLE>
+  >];
+
+  user_headquarters [label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white">
+      <TR><TD BGCOLOR="#4A90E2" ALIGN="CENTER"><FONT COLOR="white"><B>user_headquarters</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="id">id 🔑 : uuid</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="user_id">user_id : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="tier_id">tier_id : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="coins">coins : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="gems">gems : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="unlocked_themes">unlocked_themes : jsonb</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="created_at">created_at : timestamp without time zone</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="updated_at">updated_at : timestamp without time zone</TD></TR>
+    </TABLE>
+  >];
+
+  user_items [label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white">
+      <TR><TD BGCOLOR="#4A90E2" ALIGN="CENTER"><FONT COLOR="white"><B>user_items</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="id">id 🔑 : uuid</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="user_id">user_id : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="item_id">item_id : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="quantity">quantity : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="acquired_at">acquired_at : timestamp without time zone</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="acquired_from">acquired_from : text</TD></TR>
+    </TABLE>
+  >];
+
+  users [label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white">
+      <TR><TD BGCOLOR="#4A90E2" ALIGN="CENTER"><FONT COLOR="white"><B>users</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="id">id 🔑 : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="username">username : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="email">email : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="password_hash">password_hash : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="subscription_tier">subscription_tier : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="subscription_expires_at">subscription_expires_at : timestamp without time zone</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="level">level : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="experience">experience : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="total_battles">total_battles : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="total_wins">total_wins : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="rating">rating : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="daily_chat_count">daily_chat_count : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="daily_chat_reset_date">daily_chat_reset_date : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="daily_image_count">daily_image_count : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="daily_image_reset_date">daily_image_reset_date : text</TD></TR>
+      <TR><TD ALIGN="LEFT">...</TD></TR>
+    </TABLE>
+  >];
+
+  // Foreign Key Relationships
+  active_challenges:challenge_template_id -> challenge_templates:id [label="FK"];
+  active_challenges:user_id -> users:id [label="FK"];
+  battles:user1_id -> users:id [label="FK"];
+  battles:user2_id -> users:id [label="FK"];
+  battles:user_character1_id -> user_characters:id [label="FK"];
+  battles:user_character2_id -> user_characters:id [label="FK"];
+  battles:winner_id -> users:id [label="FK"];
+  challenge_alliances:active_challenge_id -> active_challenges:id [label="FK"];
+  challenge_alliances:leader_character_id -> user_characters:id [label="FK"];
+  challenge_leaderboard:user_character_id -> user_characters:id [label="FK"];
+  challenge_participants:active_challenge_id -> active_challenges:id [label="FK"];
+  challenge_participants:user_character_id -> user_characters:id [label="FK"];
+  challenge_results:active_challenge_id -> active_challenges:id [label="FK"];
+  challenge_results:challenge_template_id -> challenge_templates:id [label="FK"];
+  challenge_results:winner_character_id -> user_characters:id [label="FK"];
+  challenge_results:second_place_character_id -> user_characters:id [label="FK"];
+  challenge_results:third_place_character_id -> user_characters:id [label="FK"];
+  challenge_rewards:challenge_template_id -> challenge_templates:id [label="FK"];
+  character_abilities:character_id -> user_characters:id [label="FK"];
+  character_experience_log:character_id -> user_characters:id [label="FK"];
+  character_healing_sessions:character_id -> user_characters:id [label="FK"];
+  character_healing_sessions:facility_id -> healing_facilities:id [label="FK"];
+  character_living_context:character_id -> characters:id [label="FK"];
+  character_memories:event_id -> game_events:id [label="FK"];
+  character_progression:character_id -> user_characters:id [label="FK"];
+  character_skills:character_id -> user_characters:id [label="FK"];
+  chat_messages:battle_id -> battles:id [label="FK"];
+  chat_messages:user_id -> users:id [label="FK"];
+  chat_messages:character_id -> user_characters:id [label="FK"];
+  claimable_pack_contents:claimable_pack_id -> claimable_packs:id [label="FK"];
+  claimable_pack_contents:character_id -> characters:id [label="FK"];
+  claimable_packs:claimed_by_user_id -> users:id [label="FK"];
+  coach_progression:user_id -> users:id [label="FK"];
+  coach_skills:user_id -> users:id [label="FK"];
+  coach_xp_events:user_id -> users:id [label="FK"];
+  coach_xp_events:battle_id -> battles:id [label="FK"];
+  coach_xp_events:character_id -> user_characters:id [label="FK"];
+  financial_decisions:user_character_id -> user_characters:id [label="FK"];
+  headquarters_rooms:headquarters_id -> user_headquarters:id [label="FK"];
+  team_context:master_bed_character_id -> characters:id [label="FK"];
+  user_characters:user_id -> users:id [label="FK"];
+  user_characters:character_id -> characters:id [label="FK"];
+  user_currency:user_id -> users:id [label="FK"];
+  user_equipment:user_id -> users:id [label="FK"];
+  user_headquarters:user_id -> users:id [label="FK"];
+  user_items:user_id -> users:id [label="FK"];
+  user_items:item_id -> items:id [label="FK"];
+}

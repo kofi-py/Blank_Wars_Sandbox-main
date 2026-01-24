@@ -1,0 +1,220 @@
+-- ============================================================================
+-- PRE-FLIGHT CHECKS FOR MIGRATION 255
+-- ============================================================================
+-- Run these queries BEFORE executing migration 255
+-- All checks must PASS for safe migration
+-- ============================================================================
+
+\echo '========================================='
+\echo 'PRE-FLIGHT CHECKS FOR MIGRATION 255'
+\echo '========================================='
+\echo ''
+
+-- ============================================================================
+-- CHECK 1: Verify battle_participants.character_id contains valid UUIDs
+-- ============================================================================
+\echo 'CHECK 1: battle_participants.character_id format validation'
+SELECT
+  COUNT(*) as total_rows,
+  COUNT(CASE WHEN character_id ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN 1 END) as valid_uuid_format,
+  COUNT(CASE WHEN character_id !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN 1 END) as invalid_format
+FROM battle_participants;
+\echo 'EXPECTED: total_rows=18, valid_uuid_format=18, invalid_format=0'
+\echo ''
+
+-- ============================================================================
+-- CHECK 2: Verify battle_participants.battle_id contains valid UUIDs
+-- ============================================================================
+\echo 'CHECK 2: battle_participants.battle_id format validation'
+SELECT
+  COUNT(*) as total_rows,
+  COUNT(CASE WHEN battle_id ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN 1 END) as valid_uuid_format,
+  COUNT(CASE WHEN battle_id !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN 1 END) as invalid_format
+FROM battle_participants;
+\echo 'EXPECTED: total_rows=18, valid_uuid_format=18, invalid_format=0'
+\echo ''
+
+-- ============================================================================
+-- CHECK 3: Verify user_characters.current_battle_id contains valid UUIDs
+-- ============================================================================
+\echo 'CHECK 3: user_characters.current_battle_id format validation'
+SELECT
+  COUNT(*) as total_non_null,
+  COUNT(CASE WHEN current_battle_id ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN 1 END) as valid_uuid_format,
+  COUNT(CASE WHEN current_battle_id !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN 1 END) as invalid_format
+FROM user_characters
+WHERE current_battle_id IS NOT NULL;
+\echo 'EXPECTED: total_non_null=12, valid_uuid_format=12, invalid_format=0'
+\echo ''
+
+-- ============================================================================
+-- CHECK 4: Verify battle_participants UUIDs match user_characters.id
+-- ============================================================================
+\echo 'CHECK 4: battle_participants.character_id references user_characters.id'
+SELECT
+  COUNT(*) as total_rows,
+  SUM(CASE WHEN uc.id IS NOT NULL THEN 1 ELSE 0 END) as valid_references,
+  SUM(CASE WHEN uc.id IS NULL THEN 1 ELSE 0 END) as orphaned_references
+FROM battle_participants bp
+LEFT JOIN user_characters uc ON uc.id::text = bp.character_id;
+\echo 'EXPECTED: total_rows=18, valid_references=18, orphaned_references=0'
+\echo ''
+
+-- ============================================================================
+-- CHECK 5: Verify battle_participants.battle_id matches battles.id
+-- ============================================================================
+\echo 'CHECK 5: battle_participants.battle_id references battles.id'
+SELECT
+  COUNT(*) as total_rows,
+  SUM(CASE WHEN b.id IS NOT NULL THEN 1 ELSE 0 END) as valid_references,
+  SUM(CASE WHEN b.id IS NULL THEN 1 ELSE 0 END) as orphaned_references
+FROM battle_participants bp
+LEFT JOIN battles b ON b.id::text = bp.battle_id;
+\echo 'EXPECTED: total_rows=18, valid_references=18, orphaned_references=0'
+\echo ''
+
+-- ============================================================================
+-- CHECK 6: Verify user_characters.current_battle_id matches battles.id
+-- ============================================================================
+\echo 'CHECK 6: user_characters.current_battle_id references battles.id'
+SELECT
+  COUNT(*) as total_non_null,
+  SUM(CASE WHEN b.id IS NOT NULL THEN 1 ELSE 0 END) as valid_references,
+  SUM(CASE WHEN b.id IS NULL THEN 1 ELSE 0 END) as orphaned_references
+FROM user_characters uc
+LEFT JOIN battles b ON b.id::text = uc.current_battle_id
+WHERE uc.current_battle_id IS NOT NULL;
+\echo 'EXPECTED: total_non_null=12, valid_references=12, orphaned_references=0'
+\echo ''
+
+-- ============================================================================
+-- CHECK 7: Verify empty tables are actually empty
+-- ============================================================================
+\echo 'CHECK 7: Verify tables marked as empty are actually empty'
+SELECT
+  'character_decisions' as table_name,
+  COUNT(*) as row_count,
+  CASE WHEN COUNT(*) = 0 THEN 'PASS' ELSE 'FAIL' END as status
+FROM character_decisions
+UNION ALL
+SELECT 'character_memories', COUNT(*),
+  CASE WHEN COUNT(*) = 0 THEN 'PASS' ELSE 'FAIL' END
+FROM character_memories
+UNION ALL
+SELECT 'battle_actions', COUNT(*),
+  CASE WHEN COUNT(*) = 0 THEN 'PASS' ELSE 'FAIL' END
+FROM battle_actions
+UNION ALL
+SELECT 'chat_messages', COUNT(*),
+  CASE WHEN COUNT(*) = 0 THEN 'PASS' ELSE 'FAIL' END
+FROM chat_messages
+UNION ALL
+SELECT 'coach_xp_events', COUNT(*),
+  CASE WHEN COUNT(*) = 0 THEN 'PASS' ELSE 'FAIL' END
+FROM coach_xp_events;
+\echo 'EXPECTED: All row_count=0, all status=PASS'
+\echo ''
+
+-- ============================================================================
+-- CHECK 8: Count legacy data to be deleted
+-- ============================================================================
+\echo 'CHECK 8: Legacy data that will be deleted'
+SELECT
+  'user_equipment' as table_name,
+  COUNT(*) as rows_to_delete,
+  CASE WHEN COUNT(*) = 3 THEN 'EXPECTED' ELSE 'UNEXPECTED' END as status
+FROM user_equipment
+WHERE equipped_to_character_id IS NOT NULL
+UNION ALL
+SELECT 'game_events', COUNT(*),
+  CASE WHEN COUNT(*) = 16 THEN 'EXPECTED' ELSE 'UNEXPECTED' END
+FROM game_events;
+\echo 'EXPECTED: user_equipment=3, game_events=16'
+\echo ''
+
+-- ============================================================================
+-- CHECK 9: Verify TEXT columns that should NOT be converted
+-- ============================================================================
+\echo 'CHECK 9: Verify columns that should stay TEXT'
+SELECT
+  table_name,
+  column_name,
+  data_type,
+  CASE
+    WHEN table_name IN (
+      'therapist_bonuses', 'judge_bonuses', 'power_definitions',
+      'spell_definitions', 'ai_characters', 'claimable_pack_contents',
+      'domain_context', 'signature_attribute_modifiers'
+    ) AND data_type IN ('text', 'character varying') THEN 'CORRECT'
+    ELSE 'WARNING'
+  END as status
+FROM information_schema.columns
+WHERE table_name IN (
+    'therapist_bonuses', 'judge_bonuses', 'power_definitions',
+    'spell_definitions', 'ai_characters', 'claimable_pack_contents',
+    'domain_context', 'signature_attribute_modifiers'
+  )
+  AND (column_name LIKE '%character_id%' OR column_name LIKE '%battle_id%')
+  AND table_schema = 'public'
+ORDER BY table_name, column_name;
+\echo 'EXPECTED: All status=CORRECT'
+\echo ''
+
+-- ============================================================================
+-- CHECK 10: Sample therapist_bonuses to verify TEXT names
+-- ============================================================================
+\echo 'CHECK 10: Sample therapist_bonuses.character_id (should be TEXT names)'
+SELECT DISTINCT character_id
+FROM therapist_bonuses
+ORDER BY character_id
+LIMIT 5;
+\echo 'EXPECTED: carl_jung, seraphina, zxk14bw7, etc (TEXT names, not UUIDs)'
+\echo ''
+
+-- ============================================================================
+-- CHECK 11: Sample signature_attribute_modifiers to verify TEXT names
+-- ============================================================================
+\echo 'CHECK 11: Sample signature_attribute_modifiers.character_id (should be TEXT names)'
+SELECT DISTINCT character_id
+FROM signature_attribute_modifiers
+ORDER BY character_id
+LIMIT 5;
+\echo 'EXPECTED: dracula, kangaroo, quetzalcoatl, etc (TEXT names, not UUIDs)'
+\echo ''
+
+-- ============================================================================
+-- CHECK 12: Verify current column types before migration
+-- ============================================================================
+\echo 'CHECK 12: Current column types (should all be TEXT or character varying)'
+SELECT
+  table_name,
+  column_name,
+  data_type
+FROM information_schema.columns
+WHERE table_name IN (
+    'battle_participants', 'character_decisions', 'character_memories',
+    'battle_actions', 'user_characters'
+  )
+  AND (column_name LIKE '%character_id%' OR column_name LIKE '%battle_id%')
+  AND table_schema = 'public'
+ORDER BY table_name, column_name;
+\echo 'EXPECTED: All data_type should be text (will become uuid after migration)'
+\echo ''
+
+-- ============================================================================
+-- SUMMARY
+-- ============================================================================
+\echo '========================================='
+\echo 'PRE-FLIGHT CHECK SUMMARY'
+\echo '========================================='
+\echo 'If all checks PASS, migration 255 is safe to run.'
+\echo ''
+\echo 'Migration will:'
+\echo '  - Delete 3 rows from user_equipment'
+\echo '  - Delete 16 rows from game_events'
+\echo '  - Convert 35 columns from TEXT to UUID'
+\echo '  - Fix get_full_character_data() crash'
+\echo ''
+\echo 'To run migration:'
+\echo '  psql ... < 255_complete_uuid_migration.sql'
+\echo '========================================='

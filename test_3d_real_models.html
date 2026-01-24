@@ -1,0 +1,696 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Word Bubbles Test - Real Models</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #0f0f1e;
+            color: #eee;
+            overflow: hidden;
+        }
+
+        #container {
+            width: 100vw;
+            height: 100vh;
+        }
+
+        #info {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: rgba(0, 0, 0, 0.9);
+            padding: 20px;
+            border-radius: 10px;
+            border: 2px solid #00d4a0;
+            z-index: 100;
+            max-width: 450px;
+        }
+
+        h1 {
+            color: #00d4a0;
+            margin-bottom: 15px;
+            font-size: 20px;
+        }
+
+        .test-section {
+            margin-bottom: 15px;
+            padding: 10px;
+            background: rgba(0, 212, 160, 0.1);
+            border-left: 3px solid #00d4a0;
+            border-radius: 5px;
+        }
+
+        .test-section h2 {
+            color: #74b9ff;
+            font-size: 14px;
+            margin-bottom: 8px;
+        }
+
+        .test-description {
+            font-size: 12px;
+            line-height: 1.6;
+            color: #ddd;
+        }
+
+        .test-description strong {
+            color: #fdcb6e;
+        }
+
+        .controls {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.9);
+            padding: 20px 30px;
+            border-radius: 10px;
+            border: 2px solid #00d4a0;
+            text-align: center;
+            z-index: 100;
+        }
+
+        .controls h3 {
+            color: #74b9ff;
+            font-size: 14px;
+            margin-bottom: 15px;
+        }
+
+        .button-group {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+
+        button {
+            background: linear-gradient(135deg, #00d4a0, #00b894);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: bold;
+            transition: all 0.3s;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+        }
+
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 12px rgba(0, 212, 160, 0.4);
+        }
+
+        button:active {
+            transform: translateY(0);
+        }
+
+        button.secondary {
+            background: linear-gradient(135deg, #6c5ce7, #a29bfe);
+        }
+
+        .status {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: rgba(0, 0, 0, 0.9);
+            padding: 20px;
+            border-radius: 10px;
+            border: 2px solid #fdcb6e;
+            z-index: 100;
+            min-width: 200px;
+        }
+
+        .status h3 {
+            color: #fdcb6e;
+            font-size: 14px;
+            margin-bottom: 12px;
+            text-align: center;
+        }
+
+        .status-item {
+            font-size: 12px;
+            margin-bottom: 8px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .status-item .label {
+            color: #aaa;
+        }
+
+        .status-item .value {
+            color: #00d4a0;
+            font-weight: bold;
+        }
+
+        .loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0, 0, 0, 0.9);
+            padding: 30px 50px;
+            border-radius: 10px;
+            border: 2px solid #00d4a0;
+            z-index: 200;
+            text-align: center;
+        }
+
+        .loading h2 {
+            color: #00d4a0;
+            margin-bottom: 15px;
+        }
+
+        .spinner {
+            border: 4px solid rgba(0, 212, 160, 0.3);
+            border-top: 4px solid #00d4a0;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto;
+        }
+
+        @keyframes spin {
+            0% {
+                transform: rotate(0deg);
+            }
+
+            100% {
+                transform: rotate(360deg);
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div id="container"></div>
+
+    <div id="loading" class="loading">
+        <h2>Loading 3D Model...</h2>
+        <div class="spinner"></div>
+        <p style="margin-top: 15px; color: #aaa; font-size: 12px;">Loading merlin_texture.glb</p>
+    </div>
+
+    <div id="info" style="display: none;">
+        <h1>🎮 Testing Industry Standard Props</h1>
+
+        <div class="test-section">
+            <h2>✅ Sprite Property (Billboard Effect)</h2>
+            <div class="test-description">
+                <strong>DRAG to rotate camera.</strong> The speech bubble always faces you, no matter the viewing angle.
+                This is the billboard effect.
+            </div>
+        </div>
+
+        <div class="test-section">
+            <h2>✅ Transform Property</h2>
+            <div class="test-description">
+                Bubble follows the 3D model's head position in world space. <strong>Bubbles stay locked</strong> to the
+                character model.
+            </div>
+        </div>
+
+        <div class="test-section">
+            <h2>✅ Occlude Property</h2>
+            <div class="test-description">
+                <strong>Rotate behind the model.</strong> When the bubble is behind the character, it will be
+                hidden/occluded properly.
+            </div>
+        </div>
+    </div>
+
+    <div class="controls" style="display: none;">
+        <h3>🎮 Controls</h3>
+        <div class="button-group">
+            <button id="toggleBubble">Hide Bubble</button>
+            <button id="toggleRotation" class="secondary">Auto-Rotate: ON</button>
+            <button id="resetCamera" class="secondary">Reset Camera</button>
+        </div>
+    </div>
+
+    <div class="status" style="display: none;">
+        <h3>📊 Status</h3>
+        <div class="status-item">
+            <span class="label">Model:</span>
+            <span class="value" id="modelStatus">Loading...</span>
+        </div>
+        <div class="status-item">
+            <span class="label">Camera Angle:</span>
+            <span class="value" id="cameraAngle">0°</span>
+        </div>
+        <div class="status-item">
+            <span class="label">Billboard:</span>
+            <span class="value">✓ Active</span>
+        </div>
+        <div class="status-item">
+            <span class="label">Occlusion:</span>
+            <span class="value">✓ Active</span>
+        </div>
+        <div class="status-item">
+            <span class="label">Transform:</span>
+            <span class="value">✓ Active</span>
+        </div>
+        <div class="status-item" style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #444;">
+            <span class="label">Bubble Offset:</span>
+            <span class="value" id="offsetValue">0.5</span>
+        </div>
+    </div>
+
+    <div id="offsetControls"
+        style="position: fixed; bottom: 100px; left: 50%; transform: translateX(-50%); background: rgba(0, 0, 0, 0.95); padding: 25px 35px; border-radius: 10px; border: 3px solid #fdcb6e; z-index: 1000; box-shadow: 0 8px 32px rgba(253, 203, 110, 0.3);">
+        <h3 style="color: #fdcb6e; font-size: 14px; margin-bottom: 15px; text-align: center;">🔧 Adjust Bubble Offset
+        </h3>
+        <div style="display: flex; align-items: center; gap: 15px;">
+            <button id="decreaseLarge"
+                style="background: linear-gradient(135deg, #e74c3c, #c0392b); font-size: 16px; padding: 12px 20px;">-0.5</button>
+            <button id="decreaseSmall"
+                style="background: linear-gradient(135deg, #e74c3c, #c0392b); font-size: 16px; padding: 12px 20px;">-0.1</button>
+            <input type="range" id="offsetSlider" min="-2" max="5" step="0.1" value="0.5"
+                style="width: 250px; height: 30px;">
+            <button id="increaseSmall"
+                style="background: linear-gradient(135deg, #00d4a0, #00b894); font-size: 16px; padding: 12px 20px;">+0.1</button>
+            <button id="increaseLarge"
+                style="background: linear-gradient(135deg, #00d4a0, #00b894); font-size: 16px; padding: 12px 20px;">+0.5</button>
+        </div>
+        <p style="margin-top: 10px; font-size: 11px; color: #aaa; text-align: center;">
+            Find the offset that clears the head without being too far away
+        </p>
+    </div>
+
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.164.0/build/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.164.0/examples/jsm/"
+        }
+    }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+        // Scene setup
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x0f0f1e);
+
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.set(0, 1.5, 3);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.shadowMap.enabled = true;
+        document.getElementById('container').appendChild(renderer.domElement);
+
+        // Orbit controls for easy camera manipulation
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.05;
+        controls.target.set(0, 1, 0);
+
+        // Lighting
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+        scene.add(ambientLight);
+
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 1.0);
+        directionalLight.position.set(5, 10, 5);
+        directionalLight.castShadow = true;
+        scene.add(directionalLight);
+
+        const fillLight = new THREE.DirectionalLight(0xffffff, 0.4);
+        fillLight.position.set(-5, 5, -5);
+        scene.add(fillLight);
+
+        // Ground plane
+        const groundGeometry = new THREE.PlaneGeometry(20, 20);
+        const groundMaterial = new THREE.MeshPhongMaterial({
+            color: 0x1a1a2e,
+            side: THREE.DoubleSide
+        });
+        const ground = new THREE.Mesh(groundGeometry, groundMaterial);
+        ground.rotation.x = -Math.PI / 2;
+        ground.receiveShadow = true;
+        scene.add(ground);
+
+        // Variables
+        let model = null;
+        let bubble = null;
+        let headBone = null;
+        let headBasePosition = new THREE.Vector3(); // Initialize the vector
+        let bubbleVisible = true;
+        let autoRotate = true;
+        let bubbleOffset = 0.2; // This will be calculated automatically
+
+        // --- HEURISTIC BONE FINDING (Industry Best Practice) ---
+        function findHeadBone(character) {
+            const possibleNames = ['head', 'neck'];
+            let bestBoneByName = null;
+            let bestBoneByPosition = null;
+            let highestY = -Infinity;
+
+            character.traverse(object => {
+                if (object.isBone) {
+                    // 1. Check for common names
+                    const boneName = object.name.toLowerCase();
+                    for (const name of possibleNames) {
+                        if (boneName.includes(name)) {
+                            bestBoneByName = object;
+                            return; // Exit traverse early if a named bone is found
+                        }
+                    }
+
+                    // 2. If no name match yet, track the highest bone
+                    try {
+                        const worldPos = new THREE.Vector3();
+                        object.getWorldPosition(worldPos);
+
+                        if (worldPos.y > highestY) {
+                            highestY = worldPos.y;
+                            bestBoneByPosition = object;
+                        }
+                    } catch (e) {
+                        // Ignore errors, this can happen during loading
+                    }
+                }
+            });
+            // Prioritize a bone found by name, otherwise use the highest one.
+            return bestBoneByName || bestBoneByPosition;
+        }
+
+        // Create speech bubble sprite
+        function createBubbleSprite(text) {
+            const canvas = document.createElement('canvas');
+            const context = canvas.getContext('2d');
+            canvas.width = 512;
+            canvas.height = 256;
+
+            // Draw bubble background with comic book style
+            context.fillStyle = '#ffffff';
+            context.strokeStyle = '#2d3436';
+            context.lineWidth = 6;
+
+            // Main bubble
+            context.beginPath();
+            context.roundRect(20, 20, 472, 160, 20);
+            context.fill();
+            context.stroke();
+
+            // Tail pointing down
+            context.beginPath();
+            context.moveTo(256, 180);
+            context.lineTo(240, 220);
+            context.lineTo(270, 190);
+            context.closePath();
+            context.fillStyle = '#ffffff';
+            context.fill();
+            context.strokeStyle = '#2d3436';
+            context.stroke();
+
+            // Draw text
+            context.fillStyle = '#2d3436';
+            context.font = 'bold 32px Arial';
+            context.textAlign = 'center';
+            context.textBaseline = 'middle';
+
+            // Word wrap
+            const maxWidth = 440;
+            const words = text.split(' ');
+            let line = '';
+            let y = 80;
+
+            words.forEach(word => {
+                const testLine = line + word + ' ';
+                const metrics = context.measureText(testLine);
+                if (metrics.width > maxWidth && line !== '') {
+                    context.fillText(line, 256, y);
+                    line = word + ' ';
+                    y += 40;
+                } else {
+                    line = testLine;
+                }
+            });
+            context.fillText(line, 256, y);
+
+            // Create sprite
+            const texture = new THREE.CanvasTexture(canvas);
+            const spriteMaterial = new THREE.SpriteMaterial({
+                map: texture,
+                transparent: true,
+                depthTest: true,  // OCCLUDE property - hides when behind objects
+                depthWrite: false,
+                opacity: 1.0
+            });
+
+            const sprite = new THREE.Sprite(spriteMaterial);
+            // SPRITE property - automatically billboards (faces camera)
+            sprite.scale.set(2, 1, 1);
+
+            return sprite;
+        }
+
+        // Load the Merlin model
+        const loader = new GLTFLoader();
+        loader.load(
+            './merlin_texture.glb',
+            (gltf) => {
+                model = gltf.scene;
+                scene.add(model);
+
+                // Center and scale model
+                const box = new THREE.Box3().setFromObject(model);
+                const center = box.getCenter(new THREE.Vector3());
+                const size = box.getSize(new THREE.Vector3());
+
+                model.position.x = -center.x;
+                model.position.y = -box.min.y;
+                model.position.z = -center.z;
+
+                // Scale to reasonable size
+                const maxDim = Math.max(size.x, size.y, size.z);
+                const targetSize = 2;
+                const scale = targetSize / maxDim;
+                model.scale.setScalar(scale);
+
+                // Enable shadows
+                model.traverse((child) => {
+                    if (child.isMesh) {
+                        child.castShadow = true;
+                        child.receiveShadow = true;
+                    }
+                });
+
+                // Force an update of the model's world matrix and all its children
+                model.updateMatrixWorld(true);
+
+                // Find the most likely head bone using our heuristic function
+                headBone = findHeadBone(model);
+
+                // Collect ALL bone names for debugging
+                const allBones = [];
+                model.traverse(obj => {
+                    if (obj.isBone) allBones.push(obj.name);
+                });
+
+                // DEBUG: Update status panel with findings
+                const statusDiv = document.querySelector('.status');
+                const debugInfo = document.createElement('div');
+                debugInfo.style.marginTop = '15px';
+                debugInfo.style.paddingTop = '15px';
+                debugInfo.style.borderTop = '1px solid #444';
+                debugInfo.innerHTML = `
+                    <div class="status-item"><span class="label">Bone Found:</span> <span class="value">${headBone ? headBone.name : 'NONE'}</span></div>
+                    <div class="status-item"><span class="label">Model Height:</span> <span class="value">${size.y.toFixed(2)}</span></div>
+                    <div class="status-item" style="display:block; margin-top:10px;">
+                        <span class="label">Available Bones:</span>
+                        <div style="max-height: 100px; overflow-y: auto; font-size: 10px; color: #aaa; margin-top: 5px; background: rgba(0,0,0,0.5); padding: 5px;">
+                            ${allBones.length > 0 ? allBones.join('<br>') : 'No bones detected! Is this a static mesh?'}
+                        </div>
+                    </div>
+                `;
+                statusDiv.appendChild(debugInfo);
+
+                console.log("Model Size:", size);
+                console.log("Head Bone:", headBone);
+
+                // --- SMART DETECT LOGIC ---
+                if (headBone) {
+                    // 1. Get head bone world position
+                    headBone.getWorldPosition(headBasePosition);
+
+                    // 2. Calculate the bounding box of the head and its children
+                    const headBox = new THREE.Box3();
+                    headBox.setFromObject(headBone);
+
+                    // 3. Calculate height
+                    const headTopY = headBox.max.y;
+                    const boneY = headBasePosition.y;
+                    const headHeight = headTopY - boneY;
+
+                    // Update debug info
+                    debugInfo.innerHTML += `<div class="status-item"><span class="label">Head Height:</span> <span class="value">${headHeight.toFixed(2)}</span></div>`;
+
+                    // 4. Set offset
+                    if (headHeight > 0.1 && headHeight < 2.0) {
+                        bubbleOffset = headHeight + 0.3;
+                    } else {
+                        bubbleOffset = 0.8;
+                    }
+
+                    // VISUAL DEBUG: Red dot at top of head
+                    const debugGeometry = new THREE.SphereGeometry(0.1, 16, 16); // Made bigger (0.1)
+                    const debugMaterial = new THREE.MeshBasicMaterial({ color: 0xff0000, depthTest: false }); // Always visible
+                    const debugSphere = new THREE.Mesh(debugGeometry, debugMaterial);
+                    debugSphere.position.set(headBasePosition.x, headTopY, headBasePosition.z);
+                    debugSphere.renderOrder = 999; // Draw on top
+                    scene.add(debugSphere);
+
+                } else {
+                    // Fallback to top of bounding box if no bone found
+                    const modelBox = new THREE.Box3().setFromObject(model);
+                    headBasePosition.set(0, modelBox.max.y, 0);
+                    bubbleOffset = 0.5;
+
+                    // VISUAL DEBUG: Blue dot at model top (Fallback)
+                    const debugGeometry = new THREE.SphereGeometry(0.1, 16, 16);
+                    const debugMaterial = new THREE.MeshBasicMaterial({ color: 0x0000ff, depthTest: false });
+                    const debugSphere = new THREE.Mesh(debugGeometry, debugMaterial);
+                    debugSphere.position.copy(headBasePosition);
+                    debugSphere.renderOrder = 999;
+                    scene.add(debugSphere);
+                }
+
+                // Create speech bubble
+                bubble = createBubbleSprite("The ancient texts speak of great power!");
+                bubble.position.copy(headBasePosition);
+                bubble.position.y += bubbleOffset;
+                scene.add(bubble);
+
+                // Hide loading, show UI
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('info').style.display = 'block';
+                document.querySelector('.controls').style.display = 'block';
+                document.querySelector('.status').style.display = 'block';
+                document.getElementById('modelStatus').textContent = '✓ Loaded';
+
+                // Initialize offset display
+                updateOffsetDisplay();
+            },
+            (progress) => {
+                const percent = (progress.loaded / progress.total * 100).toFixed(0);
+                console.log(`Loading: ${percent}%`);
+            },
+            (error) => {
+                console.error('Error loading model:', error);
+                document.querySelector('.loading h2').textContent = 'Error Loading Model';
+                document.querySelector('.loading p').textContent = 'Check console for details';
+                document.querySelector('.spinner').style.display = 'none';
+            }
+        );
+
+        // Offset adjustment functions
+        function adjustOffset(delta) {
+            bubbleOffset = Math.max(-2, Math.min(5, bubbleOffset + delta));
+            document.getElementById('offsetSlider').value = bubbleOffset;
+            updateOffsetDisplay();
+        }
+
+        function updateOffsetDisplay() {
+            document.getElementById('offsetValue').textContent = bubbleOffset.toFixed(2);
+            // The actual position update happens in the animate loop
+        }
+
+        // Slider control
+        document.getElementById('offsetSlider').addEventListener('input', (e) => {
+            bubbleOffset = parseFloat(e.target.value);
+            updateOffsetDisplay();
+        });
+
+        // Offset button controls
+        document.getElementById('decreaseLarge').addEventListener('click', () => adjustOffset(-0.5));
+        document.getElementById('decreaseSmall').addEventListener('click', () => adjustOffset(-0.1));
+        document.getElementById('increaseSmall').addEventListener('click', () => adjustOffset(0.1));
+        document.getElementById('increaseLarge').addEventListener('click', () => adjustOffset(0.5));
+
+        // Button controls
+        document.getElementById('toggleBubble').addEventListener('click', () => {
+            bubbleVisible = !bubbleVisible;
+            if (bubble) bubble.visible = bubbleVisible;
+            document.getElementById('toggleBubble').textContent = bubbleVisible ? 'Hide Bubble' : 'Show Bubble';
+        });
+
+        document.getElementById('toggleRotation').addEventListener('click', () => {
+            autoRotate = !autoRotate;
+            controls.autoRotate = autoRotate;
+            document.getElementById('toggleRotation').textContent = autoRotate ? 'Auto-Rotate: ON' : 'Auto-Rotate: OFF';
+        });
+
+        document.getElementById('resetCamera').addEventListener('click', () => {
+            camera.position.set(0, 1.5, 3);
+            controls.target.set(0, 1, 0);
+            controls.update();
+        });
+
+        // Animation loop
+        function animate() {
+            requestAnimationFrame(animate);
+
+            // Update controls
+            controls.update();
+
+            // TRANSFORM property - bubble follows head position
+            if (model && bubble && headBone) {
+                const headWorldPos = new THREE.Vector3();
+                headBone.getWorldPosition(headWorldPos);
+                bubble.position.copy(headWorldPos);
+                bubble.position.y += bubbleOffset; // Use calculated offset
+            } else if (model && bubble) {
+                // Fallback for no bones: use the calculated head base position
+                // We need to update it relative to the model's current position in case the model moves
+                const modelWorldPos = new THREE.Vector3();
+                model.getWorldPosition(modelWorldPos);
+
+                // headBasePosition was set relative to world 0,0,0 when model was at 0,0,0
+                // If model moves, we'd need to adjust, but for this test the model is static.
+                // However, let's be safe and just use the pre-calculated headBasePosition
+                // which represents the top of the mesh.
+
+                bubble.position.copy(headBasePosition);
+                bubble.position.y += bubbleOffset;
+            }
+
+            // Update camera angle display
+            const angle = Math.atan2(camera.position.x, camera.position.z) * 180 / Math.PI;
+            document.getElementById('cameraAngle').textContent = Math.round(angle) + '°';
+
+            renderer.render(scene, camera);
+        }
+
+        animate();
+
+        // Handle window resize
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        // Enable auto-rotate
+        controls.autoRotate = true;
+        controls.autoRotateSpeed = 1.0;
+    </script>
+</body>
+
+</html>

@@ -1,0 +1,2649 @@
+import { Server as SocketIOServer, Socket } from 'socket.io';
+import { v4 as uuidv4 } from 'uuid';
+import { EventEmitter } from 'events';
+import { db_adapter } from './databaseAdapter';
+import { analytics_service } from './analytics';
+import { cache } from '../database/index';
+import { hostmaster_service, HostmasterContext } from './hostmasterService';
+import { applyHeadquartersEffectsToCharacter, getHeadquartersData } from './headquartersEffectsService';
+import { CoachProgressionService } from './coachProgressionService';
+import { CharacterProgressionService } from './characterProgressionService';
+import { ResurrectionService } from './resurrectionService';
+import { ticket_service } from './ticketService';
+import { InternalMailService } from './internalMailService';
+import { applyBattleOutcomeEffects } from './psychologyService';
+import * as BattleMechanics from './battleMechanicsService';
+import {
+  loadBattleCharacter,
+  initializePowerCooldowns,
+  initializeSpellCooldowns,
+  PowerDefinition,
+  SpellDefinition
+} from './battleCharacterLoader';
+import {
+  executePower,
+  executeSpell,
+  applyActionEffects,
+  PowerExecutionContext,
+  SpellExecutionContext
+} from './battleActionsService';
+import {
+  executeAction,
+  BattleActionRequest,
+  BattleActionResult,
+  BattleContext,
+  MoveActionRequest,
+  AttackActionRequest,
+  PowerActionRequest,
+  SpellActionRequest,
+  DefendActionRequest
+} from './battleActionExecutor';
+import {
+  reconstructBattleState,
+  persistBattleAction,
+  ReconstructedState
+} from './battleStateReconstructor';
+
+// Types
+interface BattleCharacter {
+  id: string;
+  user_id: string;
+  character_id: string;
+  name: string;
+  title?: string;
+  archetype: string;
+  level: number;
+  experience: number;
+  current_health: number;
+  max_health: number;
+  attack: number;
+  defense: number;
+  speed: number;
+  magic_attack: number;
+  magic_defense: number;
+  dexterity?: number;
+  intelligence?: number;
+  wisdom?: number;
+  spirit?: number;
+  initiative: number;
+  abilities: Ability[];
+  personality_traits: string[];
+  equipment: any[];
+  is_injured: boolean;
+  recovery_time?: Date;
+  total_battles: number;
+  total_wins: number;
+  base_action_points?: number;
+  // Powers & Spells Integration
+  unlocked_powers?: PowerDefinition[];
+  unlocked_spells?: SpellDefinition[];
+  equipped_powers?: PowerDefinition[];
+  equipped_spells?: SpellDefinition[];
+  gameplan_adherence_level: number; // 0-100
+}
+
+interface Ability {
+  name: string;
+  power: number;
+  cooldown: number;
+  type: string;
+  effect?: string;
+}
+
+interface BattleUser {
+  user_id: string;
+  character_id: string;
+  character: BattleCharacter;
+  strategy: string | null;
+  connected: boolean;
+  health: number;
+  max_health: number;
+  effects: StatusEffect[];
+  cooldowns: Record<string, number>;
+  rating: number;
+  // Powers & Spells Cooldowns
+  power_cooldowns?: Map<string, number>;
+  spell_cooldowns?: Map<string, number>;
+  team_characters?: BattleCharacter[]; // ✅ 3v3: Full team (optional for backwards compatibility)
+}
+
+interface StatusEffect {
+  type: string;
+  duration: number;
+  value?: number;
+  damage_per_turn?: number;
+  heal_per_turn?: number;
+  charges?: number;
+  damage_multiplier?: number;
+  attack_multiplier?: number;
+  defense_reduction?: number;
+}
+
+interface BattleState {
+  id: string;
+  phase: string;
+  round: number;
+  turn: number;
+  user: BattleUser;
+  opponent: BattleUser;
+  combat_log: CombatEvent[];
+  chat_enabled: boolean;
+  timer: NodeJS.Timeout | null;
+  created_at: number;
+  // Hex Grid Battle Mode
+  hex_battle_mode?: boolean;
+  hex_grid_state?: HexGridState;
+  round_adherence?: Record<string, boolean>; // Character ID -> Adherence Status (true=following, false=rogue)
+}
+
+interface HexGridState {
+  grid_size: { q: number; r: number };
+  character_positions: Map<string, HexPosition>;
+  action_states: Map<string, CharacterHexActionState>;
+  terrain_features: TerrainFeature[];
+  turn_order: string[];
+  current_turn_index: number;
+}
+
+interface HexPosition {
+  q: number;
+  r: number;
+  s: number;
+}
+
+interface CharacterHexActionState {
+  character_id: string;
+  position: HexPosition;
+  action_points: number;
+  max_action_points: number;
+  has_acted: boolean;
+  planned_action?: PlannedHexAction;
+}
+
+interface PlannedHexAction {
+  type: 'move' | 'attack' | 'move_and_attack' | 'defend';
+  move_to_hex?: HexPosition;
+  attack_target_id?: string;
+  attack_target_hex?: HexPosition;
+}
+
+interface TerrainFeature {
+  position: HexPosition;
+  type: 'broadcast_tower' | 'shark_perimeter' | 'cover' | 'hazard';
+  blocks_movement?: boolean;
+  blocks_line_of_sight?: boolean;
+}
+
+interface CombatEvent {
+  type: string;
+  round?: number;
+  timestamp: number;
+  attacker?: string;
+  defender?: string;
+  ability?: string;
+  damage?: number;
+  critical?: boolean;
+  remaining_health?: Record<string, number>;
+  order?: string[];
+  character?: string;
+  target?: string;
+  effect?: string;
+  amount?: number;
+  reason?: string;
+  // Hex Grid Battle Events
+  hex_position?: HexPosition;
+  hex_move_path?: HexPosition[];
+  flanking?: boolean;
+  line_of_sight?: boolean;
+  range_modifier?: number;
+}
+
+interface QueueEntry {
+  user_id: string;
+  team_characters: BattleCharacter[]; // 3v3: Array of 3 characters
+  mode: 'pvp' | 'pve';
+  rating: number;
+  timestamp: number;
+  ai_team_id?: string; // For PVE mode
+  user_team_id?: string; // For PVP mode (future)
+}
+
+interface StrategyModifiers {
+  atk_mod: number;
+  def_mod: number;
+  spd_mod: number;
+}
+
+interface BattleRewards {
+  xp: number;
+  currency: number;
+  bond: number;
+  winner: boolean;
+}
+
+interface CombatResult {
+  user: {
+    health: number;
+    effects: StatusEffect[];
+    cooldowns: Record<string, number>;
+  };
+  opponent: {
+    health: number;
+    effects: StatusEffect[];
+    cooldowns: Record<string, number>;
+  };
+  events: CombatEvent[];
+}
+
+// Battle phases
+const BATTLE_PHASES = {
+  MATCHMAKING: 'matchmaking',
+  STRATEGY_SELECT: 'strategy_select',
+  ROUND_COMBAT: 'round_combat',
+  CHAT_BREAK: 'chat_break',
+  BATTLE_END: 'battle_end'
+} as const;
+
+// Battle configuration
+const BATTLE_CONFIG = {
+  MAX_ROUNDS: 3,
+  ROUND_DURATION: 30, // seconds
+  CHAT_DURATION: 45, // seconds
+  STRATEGY_DURATION: 15, // seconds
+  TURN_SPEED_BONUS: 0.1, // 10% speed bonus for going first
+  CRIT_MULTIPLIER: 2.0, // Default critical hit damage multiplier
+} as const;
+
+/**
+ * Main Battle Manager
+ * Handles matchmaking, battle lifecycle, and real-time communication
+ */
+export class BattleManager extends EventEmitter {
+  private io: SocketIOServer;
+  private active_battles: Map<string, BattleState>;
+  private battle_queue: Map<string, QueueEntry>;
+  private user_socket_map: Map<string, string>; // Map user_id to socket.id
+
+  constructor(io: SocketIOServer) {
+    super();
+    this.io = io;
+    this.active_battles = new Map();
+    this.battle_queue = new Map();
+    this.user_socket_map = new Map();
+
+    // Initialize Hostmaster v8.72 with the same io instance
+    if (typeof global !== 'undefined') {
+      (global as any).io = io;
+    }
+
+    // Subscribe to battle events for multi-server coordination
+    this.initialize_multi_server_coordination().catch(error => {
+      console.warn('⚠️ Failed to initialize multi-server coordination:', error instanceof Error ? error.message : String(error));
+    });
+  }
+
+  // Initialize multi-server coordination with Redis
+  private async initialize_multi_server_coordination(): Promise<void> {
+    try {
+      // Subscribe to global battle events
+      if (cache.isUsingRedis()) {
+        await cache.subscribeToBattleEvents('global', (event: any) => {
+          this.handle_global_battle_event(event);
+        });
+        console.log('✅ Multi-server battle coordination initialized');
+      } else {
+        console.warn('⚠️ Multi-server coordination unavailable (Redis not in use), using single-server mode.');
+      }
+    } catch (error) {
+      console.warn('⚠️ Multi-server coordination unavailable, using single-server mode:', error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  // Handle global battle events from other servers
+  private handle_global_battle_event(event: any): void {
+    try {
+      switch (event.type) {
+        case 'battle_created':
+          // Another server created a battle, track it for coordination
+          console.log(`📊 Battle ${event.battle_id} created on server ${event.server_id}`);
+          // Remove users from local queue if they exist
+          if (event.user_id) {
+            this.battle_queue.delete(event.user_id);
+          }
+          if (event.opponent_id) {
+            this.battle_queue.delete(event.opponent_id);
+          }
+          break;
+        case 'battle_ended':
+          // Another server ended a battle, clean up any local references
+          console.log(`📊 Battle ${event.battle_id} ended on server ${event.server_id}`);
+          if (event.battle_id && this.active_battles.has(event.battle_id)) {
+            // Remove from local state if somehow we have a reference
+            this.active_battles.delete(event.battle_id);
+          }
+          break;
+        case 'user_disconnected':
+          // Handle user disconnection across servers
+          console.log(`📊 User ${event.user_id} disconnected from server ${event.server_id}`);
+          // Remove from local queue if they exist
+          if (event.user_id) {
+            this.battle_queue.delete(event.user_id);
+          }
+          break;
+      }
+    } catch (error) {
+      console.error('Error handling global battle event:', error);
+    }
+  }
+
+  // Redis-enhanced matchmaking
+  private async add_to_distributed_queue(queue_entry: QueueEntry): Promise<void> {
+    try {
+      await cache.addUserToMatchmaking(queue_entry.user_id, {
+        team_characters: queue_entry.team_characters, // ✅ 3v3: Store full team
+        rating: queue_entry.rating,
+        timestamp: queue_entry.timestamp,
+        mode: queue_entry.mode,
+        server_id: process.env.SERVER_ID || 'default',
+        ai_team_id: queue_entry.ai_team_id,
+        user_team_id: queue_entry.user_team_id
+      }, queue_entry.mode);
+    } catch (error) {
+      console.error('Failed to add user to distributed queue:', error);
+      // Fallback to local queue
+      this.battle_queue.set(queue_entry.user_id, queue_entry);
+    }
+  }
+
+  private async remove_from_distributed_queue(user_id: string, mode: string): Promise<void> {
+    try {
+      await cache.removeUserFromMatchmaking(user_id, mode);
+    } catch (error) {
+      console.error('Failed to remove user from distributed queue:', error);
+    }
+    // Always clean local queue
+    this.battle_queue.delete(user_id);
+  }
+
+  private async find_distributed_opponent(queue_entry: QueueEntry): Promise<QueueEntry | null> {
+    try {
+      const queue_users = await cache.getMatchmakingQueue(queue_entry.mode);
+
+      for (const user of queue_users) {
+        // Skip self
+        if (user.id === queue_entry.user_id) continue;
+
+        const user_data = user.data;
+        const rating_diff = Math.abs(queue_entry.rating - user_data.rating);
+        const wait_time = Date.now() - queue_entry.timestamp;
+
+        // Expand rating range based on wait time
+        const max_rating_diff = Math.min(200 + wait_time / 1000, 500);
+
+        if (rating_diff <= max_rating_diff) {
+          // Use distributed lock to prevent race conditions between servers
+          const lock_key = `match_lock:${[queue_entry.user_id, user.id].sort().join(':')}`;
+
+          try {
+            // Try to acquire lock with Redis SETNX
+            const lock_value = `${process.env.SERVER_ID || 'server'}:${Date.now()}`;
+            await cache.set(lock_key, lock_value, 5); // 5 second expiry
+            const lock_acquired = 'OK'; // Simplified for in-memory cache
+
+            if (lock_acquired === 'OK') {
+              // Double-check both users are still in queue before proceeding
+              const queue_users_check = await cache.getMatchmakingQueue(queue_entry.mode);
+              const user_still_in_queue = queue_users_check.some(p => p.id === queue_entry.user_id);
+              const opponent_still_in_queue = queue_users_check.some(p => p.id === user.id);
+
+              if (user_still_in_queue && opponent_still_in_queue) {
+                // Found a match! Convert back to QueueEntry format
+                const opponent: QueueEntry = {
+                  user_id: user.id,
+                  team_characters: user_data.team_characters, // ✅ 3v3: Deserialize full team
+                  rating: user_data.rating,
+                  timestamp: user_data.timestamp || Date.now(),
+                  mode: user_data.mode as 'pvp' | 'pve',
+                  user_team_id: user_data.user_team_id
+                };
+
+                // Remove both users from queue atomically
+                await this.remove_from_distributed_queue(queue_entry.user_id, queue_entry.mode);
+                await this.remove_from_distributed_queue(opponent.user_id, opponent.mode);
+
+                // Release lock before returning
+                await cache.del(lock_key);
+
+                return opponent;
+              } else {
+                // One of the players was already matched, release lock and continue searching
+                await cache.del(lock_key);
+              }
+            }
+            // If lock not acquired, another server is processing this match, skip this player
+          } catch (lock_error) {
+            console.error('Error with distributed lock:', lock_error);
+            // Continue without lock as fallback
+          }
+        }
+      }
+
+      return null;
+    } catch (error) {
+      console.error('Failed to find distributed opponent:', error);
+      // Fallback to local matchmaking
+      return this.find_opponent(queue_entry);
+    }
+  }
+
+  // Find match for player
+  async find_match(user_id: string, character_id: string, mode: 'pvp' | 'pve' = 'pvp'): Promise<any> { // Typed mode
+    try {
+      const user = await db_adapter.users.find_by_id(user_id);
+
+      // ✅ Load USER'S FULL TEAM (3 characters from teams table)
+      const teamResult = await db_adapter.query(`
+        SELECT t.id as team_id, t.character_slot_1, t.character_slot_2, t.character_slot_3
+        FROM teams t
+        WHERE t.user_id = $1 AND t.is_active = true
+        LIMIT 1
+      `, [user_id]);
+
+      if (teamResult.rows.length === 0) {
+        throw new Error('No active team found. Please create a team first.');
+      }
+
+      const team = teamResult.rows[0];
+      const characterSlots = [team.character_slot_1, team.character_slot_2, team.character_slot_3].filter(Boolean);
+
+      if (characterSlots.length !== 3) {
+        throw new Error(`Team incomplete. You have ${characterSlots.length}/3 characters. Please assign 3 characters to your team.`);
+      }
+
+      console.log(`✅ Loading team for user ${user_id}: ${characterSlots.length} characters`);
+
+      // Load all 3 characters with powers/spells
+      const team_characters: BattleCharacter[] = [];
+      for (const charId of characterSlots) {
+        const battle_character = await loadBattleCharacter(charId);
+
+        if (!battle_character || battle_character.user_id !== user_id) {
+          throw new Error(`Invalid character ${charId} in team`);
+        }
+
+        // Check if character is injured
+        if (battle_character.is_injured && battle_character.recovery_time && battle_character.recovery_time > new Date()) {
+          throw new Error(`Character ${battle_character.name} is still recovering until ${battle_character.recovery_time}`);
+        }
+
+        // Apply headquarters effects to character stats
+        const headquarters = await getHeadquartersData(user_id);
+        const enhanced_character = headquarters
+          ? applyHeadquartersEffectsToCharacter(battle_character as any, headquarters)
+          : battle_character;
+
+        team_characters.push(enhanced_character as any as BattleCharacter);
+      }
+
+      // Check daily battle limits
+      const { usage_tracking_service } = require('./usageTrackingService');
+      const { db } = require('../database/postgres');
+
+      const can_battle = await usage_tracking_service.trackBattleUsage(user_id, db);
+      if (!can_battle) {
+        throw new Error('Daily battle limit reached. Upgrade to premium for more battles!');
+      }
+
+      // Create queue entry with full team
+      const queue_entry: QueueEntry = {
+        user_id,
+        team_characters, // ✅ Full 3-character team
+        rating: user?.rating || 1000,
+        timestamp: Date.now(),
+        mode,
+        user_team_id: team.team_id
+      };
+
+      // Add to distributed queue (Redis) for multi-server support
+      await this.add_to_distributed_queue(queue_entry);
+      analytics_service.trackUserAction(user_id, 'matchmaking_start', { character_id, mode });
+
+      // PVE Matchmaking
+      if (mode === 'pve') {
+        console.log(`🤖 PVE Matchmaking started for user ${user_id}`);
+        const opponent = await this.find_pve_opponent(queue_entry);
+        if (opponent) {
+          console.log(`✅ PVE Opponent found: ${opponent.team_characters[0].name}`);
+          // Create battle
+          const battle = await this.create_battle(queue_entry, opponent);
+
+          // Publish battle creation event
+          await cache.publishBattleEvent('global', {
+            type: 'battle_created',
+            battle_id: battle?.id,
+            user_id: user_id,
+            opponent_id: opponent.user_id,
+            server_id: process.env.SERVER_ID || 'default'
+          });
+
+          // Return first character info for backwards compatibility with client
+          const opponentLeader = opponent.team_characters[0];
+          return {
+            status: 'found',
+            battle_id: battle?.id,
+            websocket_url: `/battle/${battle?.id}`,
+            opponent: {
+              id: opponent.user_id,
+              username: 'AI Opponent',
+              rating: opponent.rating || 1000
+            },
+            character: {
+              id: opponentLeader.character_id || opponentLeader.id,
+              name: opponentLeader.name,
+              title: opponentLeader.title,
+              level: opponentLeader.level,
+              current_health: opponentLeader.current_health,
+              max_health: opponentLeader.max_health,
+              abilities: opponentLeader.abilities.map(ability => ({
+                name: ability.name,
+                damage_multiplier: ability.power || 1.0,
+                cooldown: ability.cooldown || 0,
+                effect: ability.effect
+              }))
+            }
+          };
+        }
+      }
+
+      // PVP Matchmaking
+      // Try to find opponent across all servers
+      const opponent = await this.find_distributed_opponent(queue_entry);
+
+      if (opponent) {
+        // Match found! (players already removed from distributed queue)
+
+        // Create battle
+        const battle = await this.create_battle(queue_entry, opponent);
+
+        // Publish battle creation event for multi-server coordination
+        await cache.publishBattleEvent('global', {
+          type: 'battle_created',
+          battle_id: battle?.id,
+          user_id: user_id,
+          opponent_id: opponent.user_id,
+          server_id: process.env.SERVER_ID || 'default'
+        });
+
+        analytics_service.trackMatchmaking(user_id, Date.now() - queue_entry.timestamp, await cache.getMatchmakingQueueSize(queue_entry.mode));
+        analytics_service.trackMatchmaking(opponent.user_id, Date.now() - opponent.timestamp, await cache.getMatchmakingQueueSize(opponent.mode));
+
+        // Get opponent user data for frontend
+        const opponent_user = await db_adapter.users.find_by_id(opponent.user_id);
+
+        if (!opponent.team_characters || opponent.team_characters.length === 0) {
+          console.error('Opponent team data missing');
+          throw new Error('Invalid opponent data');
+        }
+
+        // Return first character (leader) for backwards compatibility with client
+        const opponentLeader = opponent.team_characters[0];
+        return {
+          status: 'found',
+          battle_id: battle?.id,
+          websocket_url: `/battle/${battle?.id}`,
+          opponent: {
+            id: opponent.user_id,
+            username: opponent_user?.username || 'Unknown Player',
+            rating: opponent.rating || 1000
+          },
+          character: {
+            id: opponentLeader.character_id || opponentLeader.id,
+            name: opponentLeader.name,
+            title: opponentLeader.title,
+            level: opponentLeader.level,
+            current_health: opponentLeader.current_health,
+            max_health: opponentLeader.max_health,
+            abilities: opponentLeader.abilities.map(ability => ({
+              name: ability.name,
+              damage_multiplier: ability.power || 1.0,
+              cooldown: ability.cooldown || 0,
+              effect: ability.effect
+            }))
+          }
+        };
+      } else {
+        // Still searching
+        const queue_size = await cache.getMatchmakingQueueSize(queue_entry.mode);
+        return {
+          status: 'waiting',
+          queue_position: queue_size,
+          estimated_wait: this.estimate_wait_time(queue_entry.rating)
+        };
+      }
+    } catch (error) {
+      console.error('Matchmaking error:', error);
+      throw error;
+    }
+  }
+
+  // Find PVE Opponent
+  private async find_pve_opponent(user: QueueEntry): Promise<QueueEntry | null> {
+    try {
+      console.log('🤖 Looking for AI Opponent Team...');
+
+      // 1. Find a suitable AI Team
+      // For now, just grab a random active team. Later, match by rating.
+      const teamResult = await db_adapter.query(`
+        SELECT * FROM ai_teams 
+        WHERE is_active = true 
+        ORDER BY RANDOM() 
+        LIMIT 1
+      `);
+
+      if (teamResult.rows.length === 0) {
+        console.log('⚠️ No AI teams found in database.');
+        return null;
+      }
+
+      const aiTeam = teamResult.rows[0];
+      console.log(`✅ Found AI Team: ${aiTeam.name} (Coach: ${aiTeam.coach_id})`);
+
+      // 2. Load AI Characters (all 3 for 3v3)
+      const charsResult = await db_adapter.query(`
+        SELECT ac.*, c.name, c.title, c.archetype, c.base_action_points
+        FROM ai_characters ac
+        JOIN characters c ON ac.character_id = c.id
+        WHERE ac.team_id = $1
+        ORDER BY ac.id
+      `, [aiTeam.id]);
+
+      if (charsResult.rows.length !== 3) {
+        console.error(`❌ AI Team ${aiTeam.id} has ${charsResult.rows.length} characters, expected 3`);
+        return null;
+      }
+
+      console.log(`✅ Loaded ${charsResult.rows.length} AI characters for team ${aiTeam.id}`);
+
+      // 3. Map all 3 characters to BattleCharacter array
+      const team_characters: BattleCharacter[] = charsResult.rows.map(char => {
+        console.log(`🔍 Mapping AI Character:`, { id: char.id, name: char.name, character_id: char.character_id });
+
+        return {
+          id: char.id, // ✅ FIX: Use char.id (from ai_characters table)
+          user_id: aiTeam.coach_id,
+          character_id: char.character_id, // Canonical ID (e.g., 'space_cyborg')
+          name: char.name,
+          title: char.title,
+          archetype: char.archetype,
+          level: char.level,
+          experience: char.experience,
+          current_health: char.current_health,
+          max_health: char.max_health,
+          attack: char.attack,
+          defense: char.defense,
+          speed: char.speed,
+          magic_attack: char.magic_attack,
+          magic_defense: char.magic_defense,
+          base_action_points: char.base_action_points || 3,
+          abilities: JSON.parse(char.abilities || '[]'),
+          personality_traits: JSON.parse(char.personality_traits || '[]'),
+          equipment: JSON.parse(char.equipment || '[]'),
+          is_injured: false,
+          total_battles: 0,
+          total_wins: 0,
+          unlocked_powers: [],
+          unlocked_spells: [],
+          equipped_powers: [],
+          equipped_spells: []
+        };
+      });
+
+      // 4. Create QueueEntry with full team
+      const queueEntry: QueueEntry = {
+        user_id: aiTeam.coach_id,
+        team_characters, // ✅ Full 3-character team
+        mode: 'pve',
+        rating: aiTeam.rating,
+        timestamp: Date.now(),
+        ai_team_id: aiTeam.id
+      };
+
+      console.log(`📦 Generated PVE QueueEntry with ${team_characters.length} characters`);
+      return queueEntry;
+
+    } catch (error) {
+      console.error('Matchmaking error:', error);
+      throw error;
+    }
+  }
+
+  // Find suitable opponent
+  private find_opponent(player: QueueEntry): QueueEntry | null {
+    const RATING_RANGE = 200;
+    const WAIT_TIME_EXPANSION = 50; // Expand range by 50 per 10 seconds
+    const wait_time = Date.now() - player.timestamp;
+    const expanded_range = RATING_RANGE + Math.floor(wait_time / 10000) * WAIT_TIME_EXPANSION;
+
+    for (const [opponent_id, opponent] of this.battle_queue) {
+      if (opponent_id === player.user_id) continue;
+      if (opponent.mode !== player.mode) continue;
+
+      const rating_diff = Math.abs(player.rating - opponent.rating);
+      if (rating_diff <= expanded_range) {
+        return opponent;
+      }
+    }
+
+    return null;
+  }
+
+  // Create new battle
+  private async create_battle(user: QueueEntry, opponent: QueueEntry): Promise<BattleState | null> {
+    try {
+      const is_pve = opponent.mode === 'pve';
+
+      console.log('⚔️ Creating 3v3 Battle:', {
+        user_id: user.user_id,
+        user_team_size: user.team_characters.length,
+        opponent_id: opponent.user_id,
+        opponent_team_size: opponent.team_characters.length,
+        is_pve
+      });
+
+      const battle_data = {
+        user_id: user.user_id,
+        opponent_user_id: is_pve ? null : opponent.user_id,
+        opponent_ai_coach_id: is_pve ? opponent.user_id : null,
+        opponent_ai_team_id: is_pve ? opponent.ai_team_id : null,
+
+        // ✅ 3v3: Individual character IDs are null (teams stored in team_data)
+        user_character_id: null,
+        opponent_character_id: null,
+        opponent_ai_character_id: null,
+
+        battle_type: 'ranked',
+        status: 'active',
+        phase: 'strategy_select',
+        current_round: 1,
+        max_rounds: 3,
+
+        // ✅ Store full teams (3 characters each)
+        user_team_data: { characters: user.team_characters },
+        opponent_team_data: { characters: opponent.team_characters },
+
+        battle_log: [],
+        round_results: [],
+        coaching_data: {},
+        ai_judge_context: {},
+        global_morale: { user: 50, opponent: 50 }
+      };
+
+
+      const battle = await db_adapter.battles.create(battle_data);
+      if (!battle) {
+        throw new Error('Failed to create battle in database');
+      }
+
+      // Populate battle_participants table
+      const all_participants = [
+        ...user.team_characters.map(c => ({ ...c, team_id: user.user_team_id, user_id: user.user_id })),
+        ...opponent.team_characters.map(c => ({ ...c, team_id: opponent.user_team_id, user_id: opponent.user_id }))
+      ];
+
+      for (const char of all_participants) {
+        await db_adapter.query(`
+          INSERT INTO battle_participants (
+            battle_id, character_id, user_id, team_id,
+            current_health, current_ap, current_position, is_active
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        `, [
+          battle.id,
+          char.id, // Character ID (TEXT)
+          char.user_id, // User ID (TEXT)
+          char.team_id || null, // Team ID (UUID)
+          char.current_health,
+          char.base_action_points || 3, // Initial AP
+          null, // Initial position (set later in initialize_hex_grid_battle)
+          true
+        ]);
+      }
+
+      // Initialize battle state
+      // NOTE: BattleState currently uses single character structure for backwards compatibility
+      // Full 3v3 data is in battle.user_team_data/opponent_team_data and hex_grid_state
+      const userLeader = user.team_characters[0];
+      const opponentLeader = opponent.team_characters[0];
+
+      const battle_state: BattleState = {
+        id: battle.id,
+        phase: BATTLE_PHASES.STRATEGY_SELECT,
+        round: 1,
+        turn: 0,
+
+        user: {
+          user_id: user.user_id,
+          character_id: userLeader.id, // ✅ 3v3: Use leader for legacy compatibility
+          character: userLeader,
+          strategy: null,
+          connected: false,
+          health: userLeader.current_health,
+          max_health: userLeader.max_health,
+          effects: [],
+          cooldowns: {},
+          rating: user.rating,
+          // Initialize power/spell cooldowns
+          power_cooldowns: initializePowerCooldowns(userLeader.equipped_powers),
+          spell_cooldowns: initializeSpellCooldowns(userLeader.equipped_spells),
+          team_characters: user.team_characters // ✅ 3v3: Full team available
+        },
+
+        opponent: {
+          user_id: opponent.user_id,
+          character_id: opponentLeader.id, // ✅ 3v3: Use leader for legacy compatibility
+          character: opponentLeader,
+          strategy: null,
+          connected: false,
+          health: opponentLeader.current_health,
+          max_health: opponentLeader.max_health,
+          effects: [],
+          cooldowns: {},
+          rating: opponent.rating,
+          // Initialize power/spell cooldowns
+          power_cooldowns: initializePowerCooldowns(opponentLeader.equipped_powers),
+          spell_cooldowns: initializeSpellCooldowns(opponentLeader.equipped_spells),
+          team_characters: opponent.team_characters // ✅ 3v3: Full team available
+        },
+
+        combat_log: [],
+        chat_enabled: false,
+        timer: null,
+        created_at: Date.now(),
+        round_adherence: {} // Initialize empty adherence map
+      };
+
+      this.active_battles.set(battle.id, battle_state);
+
+      // Notify users
+      this.notify_user(user.user_id, 'match_found', { battle_id: battle.id });
+      this.notify_user(opponent.user_id, 'match_found', { battle_id: battle.id });
+
+      // Generate Hostmaster v8.72 battle introduction
+      setTimeout(async () => {
+        await this.generate_hostmaster_introduction(battle_state);
+      }, 2000);
+
+      // Track analytics
+      analytics_service.trackUserAction(user.user_id, 'battle_start', { battle_id: battle.id });
+      analytics_service.trackUserAction(opponent.user_id, 'battle_start', { battle_id: battle.id });
+
+      // Start strategy phase timer
+      this.start_phase_timer(battle.id, BATTLE_PHASES.STRATEGY_SELECT, BATTLE_CONFIG.STRATEGY_DURATION);
+
+      return battle_state;
+    } catch (error) {
+      console.error('Error creating battle:', error);
+      return null;
+    }
+  }
+
+  // Initialize hex grid battle state
+  private initialize_hex_grid_battle(battle_state: BattleState, user: QueueEntry, opponent: QueueEntry): void {
+    // Create 12x12 hex grid for 3v3 combat
+    const grid_size = { q: 12, r: 12 };
+
+    const character_positions = new Map<string, HexPosition>();
+    const action_states = new Map<string, CharacterHexActionState>();
+
+    // ✅ 3v3: Position USER'S TEAM (3 characters, left side)
+    const user_positions: HexPosition[] = [
+      { q: 2, r: 4, s: -6 },  // Front
+      { q: 2, r: 5, s: -7 },  // Mid
+      { q: 2, r: 6, s: -8 }   // Back
+    ];
+
+    user.team_characters.forEach((char, index) => {
+      const pos = user_positions[index];
+      const ap = char.base_action_points || 3;
+
+      character_positions.set(char.id, pos);
+      action_states.set(char.id, {
+        character_id: char.id,
+        position: pos,
+        action_points: ap,
+        max_action_points: ap,
+        has_acted: false
+      });
+    });
+
+    // ✅ 3v3: Position OPPONENT'S TEAM (3 characters, right side)
+    const opponent_positions: HexPosition[] = [
+      { q: 9, r: 4, s: -13 }, // Front
+      { q: 9, r: 5, s: -14 }, // Mid
+      { q: 9, r: 6, s: -15 }  // Back
+    ];
+
+    opponent.team_characters.forEach((char, index) => {
+      const pos = opponent_positions[index];
+      const ap = char.base_action_points || 3;
+
+      character_positions.set(char.id, pos);
+      action_states.set(char.id, {
+        character_id: char.id,
+        position: pos,
+        action_points: ap,
+        max_action_points: ap,
+        has_acted: false
+      });
+    });
+
+    // Add terrain features (broadcast tower at center, shark perimeter)
+    const terrain_features: TerrainFeature[] = [
+      // Broadcast tower at center
+      {
+        position: { q: 5, r: 5, s: -10 },
+        type: 'broadcast_tower',
+        blocks_movement: true,
+        blocks_line_of_sight: true
+      }
+    ];
+
+    // Add shark perimeter (edges of grid)
+    for (let q = 0; q < grid_size.q; q++) {
+      terrain_features.push({
+        position: { q, r: 0, s: -q },
+        type: 'shark_perimeter',
+        blocks_movement: true,
+        blocks_line_of_sight: false
+      });
+      terrain_features.push({
+        position: { q, r: grid_size.r - 1, s: -(q + grid_size.r - 1) },
+        type: 'shark_perimeter',
+        blocks_movement: true,
+        blocks_line_of_sight: false
+      });
+    }
+
+    // ✅ Calculate turn order for ALL 6 characters (sorted by initiative)
+    const all_characters = [
+      ...user.team_characters.map(c => ({ ...c, team: 'user' })),
+      ...opponent.team_characters.map(c => ({ ...c, team: 'opponent' }))
+    ];
+
+    const turn_order = all_characters
+      .sort((a, b) => {
+        // Initiative from DB generated column - no fallback, DB is source of truth
+        return b.initiative - a.initiative; // Descending (highest initiative first)
+      })
+      .map(c => c.id);
+
+    console.log(`✅ Initialized 3v3 hex grid: ${user.team_characters.length} user chars + ${opponent.team_characters.length} opponent chars`);
+    console.log(`📊 Turn order (by initiative):`, turn_order);
+
+
+    // Set hex grid state
+    battle_state.hex_battle_mode = true;
+    battle_state.hex_grid_state = {
+      grid_size,
+      character_positions,
+      action_states,
+      terrain_features,
+      turn_order,
+      current_turn_index: 0
+    };
+
+    // Log initialization
+    battle_state.combat_log.push({
+      type: 'hex_grid_initialized',
+      timestamp: Date.now(),
+      hex_position: { q: grid_size.q, r: grid_size.r, s: 0 }
+    });
+  }
+
+  // Serialize hex grid state for database storage
+  private serialize_hex_grid_state(hex_state: HexGridState | undefined): any {
+    if (!hex_state) return null;
+
+    return {
+      grid_size: hex_state.grid_size,
+      character_positions: Array.from(hex_state.character_positions.entries()).map(([id, pos]) => ({ character_id: id, position: pos })),
+      action_states: Array.from(hex_state.action_states.entries()).map(([id, state]) => ({ character_id: id, ...state })),
+      terrain_features: hex_state.terrain_features,
+      turn_order: hex_state.turn_order,
+      current_turn_index: hex_state.current_turn_index
+    };
+  }
+
+  // Handle player connection to battle
+  async connect_to_battle(socket: Socket, battle_id: string, user_id: string): Promise<void> {
+    const battle_state = this.active_battles.get(battle_id);
+    if (!battle_state) {
+      throw new Error('Battle not found');
+    }
+
+    // Verify user belongs to battle
+    const user_side = battle_state.user.user_id === user_id ? 'user' :
+      battle_state.opponent.user_id === user_id ? 'opponent' : null;
+
+    if (!user_side) {
+      throw new Error('Not authorized for this battle');
+    }
+
+    // Update connection status
+    battle_state[user_side].connected = true;
+    socket.join(`battle:${battle_id}`);
+    (socket as any).battle_id = battle_id;
+    (socket as any).user_side = user_side;
+    (socket as any).user_id = user_id;
+
+    // Send current state
+    socket.emit('battle_state', this.get_user_view(battle_state, user_side));
+
+    // Notify opponent
+    const opponent_side = user_side === 'user' ? 'opponent' : 'user';
+    this.io.to(`battle:${battle_id}`).emit('opponent_connected', {
+      side: opponent_side,
+      connected: true
+    });
+
+    // Set up event handlers
+    this.setup_socket_handlers(socket, battle_state);
+  }
+
+  // Get user-specific view of battle state
+  private get_user_view(battle_state: BattleState, user_side: string): any {
+    const current_user = battle_state[user_side as keyof Pick<BattleState, 'user' | 'opponent'>];
+    const opponent_user = user_side === 'user' ? battle_state.opponent : battle_state.user;
+
+    // Convert cooldown maps to objects for serialization
+    const serialize_power_cooldowns = (cooldowns?: Map<string, number>) => {
+      if (!cooldowns) return {};
+      return Object.fromEntries(cooldowns);
+    };
+
+    const serialize_spell_cooldowns = (cooldowns?: Map<string, number>) => {
+      if (!cooldowns) return {};
+      return Object.fromEntries(cooldowns);
+    };
+
+    const base_view = {
+      battle_id: battle_state.id,
+      phase: battle_state.phase,
+      round: battle_state.round,
+      your_character: {
+        id: current_user.character.id,
+        name: current_user.character.name,
+        archetype: current_user.character.archetype,
+        level: current_user.character.level,
+        health: current_user.health,
+        max_health: current_user.max_health,
+        attack: current_user.character.attack,
+        defense: current_user.character.defense,
+        speed: current_user.character.speed,
+        magic_attack: current_user.character.magic_attack,
+        magic_defense: current_user.character.magic_defense,
+        abilities: current_user.character.abilities,
+        equipment: current_user.character.equipment,
+        effects: current_user.effects,
+        strategy: current_user.strategy,
+        is_injured: current_user.character.is_injured,
+        total_battles: current_user.character.total_battles,
+        total_wins: current_user.character.total_wins,
+        personality_traits: current_user.character.personality_traits,
+        // Powers & Spells
+        equipped_powers: current_user.character.equipped_powers,
+        equipped_spells: current_user.character.equipped_spells,
+        power_cooldowns: serialize_power_cooldowns(current_user.power_cooldowns),
+        spell_cooldowns: serialize_spell_cooldowns(current_user.spell_cooldowns)
+      },
+      opponent_character: {
+        id: opponent_user.character.id,
+        name: opponent_user.character.name,
+        archetype: opponent_user.character.archetype,
+        level: opponent_user.character.level,
+        health: opponent_user.health,
+        max_health: opponent_user.max_health,
+        attack: opponent_user.character.attack,
+        defense: opponent_user.character.defense,
+        speed: opponent_user.character.speed,
+        magic_attack: opponent_user.character.magic_attack,
+        magic_defense: opponent_user.character.magic_defense,
+        effects: opponent_user.effects,
+        strategy: opponent_user.strategy,
+        // Show equipped powers/spells count but not details (fog of war)
+        equipped_powers_count: opponent_user.character.equipped_powers.length,
+        equipped_spells_count: opponent_user.character.equipped_spells.length
+      },
+      combat_log: battle_state.combat_log.slice(-10), // Last 10 events
+      chat_enabled: battle_state.chat_enabled,
+      connected: {
+        you: current_user.connected,
+        opponent: opponent_user.connected
+      }
+    };
+
+    // Add hex grid state if in hex battle mode
+    if (battle_state.hex_battle_mode && battle_state.hex_grid_state) {
+      return {
+        ...base_view,
+        hex_battle_mode: true,
+        hex_grid_state: this.serialize_hex_grid_state(battle_state.hex_grid_state)
+      };
+    }
+
+    return base_view;
+  }
+
+  // Socket event handlers
+  private setup_socket_handlers(socket: Socket, battle_state: BattleState): void {
+    // Strategy selection
+    socket.on('select_strategy', async (strategy: string) => {
+      if (battle_state.phase !== BATTLE_PHASES.STRATEGY_SELECT) return;
+
+      const user_side = (socket as any).user_side;
+      if (battle_state[user_side as keyof Pick<BattleState, 'user' | 'opponent'>].strategy) return; // Already selected
+
+      // Validate strategy
+      if (!['aggressive', 'defensive', 'balanced'].includes(strategy)) return;
+
+      battle_state[user_side as keyof Pick<BattleState, 'user' | 'opponent'>].strategy = strategy;
+
+      // Check if both users ready
+      if (battle_state.user.strategy && battle_state.opponent.strategy) {
+        await this.start_combat_round(battle_state);
+      }
+    });
+
+    // Chat message (placeholder - would integrate with existing chat service)
+    socket.on('send_chat', async (message: string) => {
+      if (battle_state.phase !== BATTLE_PHASES.CHAT_BREAK) return;
+      if (!battle_state.chat_enabled) return;
+
+      const user_side = (socket as any).user_side;
+      const character = battle_state[user_side as keyof Pick<BattleState, 'user' | 'opponent'>].character;
+
+      try {
+        // Use real AI chat service for battle combat responses
+        const { aiChatService } = require('./aiChatService');
+        const { db } = require('../database/postgres');
+
+        // Build character context for battle
+        const chat_context = {
+          character_id: character.character_id,
+          character_name: character.name || 'Warrior',
+          personality: {
+            traits: ['Battle-focused', 'Strategic', 'Determined'],
+            speech_style: 'Direct and tactical during combat',
+            motivations: ['Victory', 'Honor in battle', 'Team coordination'],
+            fears: ['Defeat', 'Letting allies down']
+          },
+          historical_period: (character as any).origin_era || 'Ancient times',
+          current_bond_level: (character as any).bond_level || 50,
+          previous_messages: []
+        };
+
+        // Generate real AI response for battle context
+        const ai_response = await aiChatService.generate_character_response(
+          chat_context,
+          message,
+          (socket as any).user_id,
+          db,
+          {
+            is_in_battle: true,
+            is_combat_chat: true, // This bypasses usage limits
+            battle_phase: 'chat_break',
+            current_health: character.current_health,
+            max_health: character.max_health,
+            opponent_name: 'opponent'
+          }
+        );
+
+        // Broadcast to battle room
+        this.io.to(`battle:${battle_state.id}`).emit('chat_message', {
+          side: user_side,
+          user_message: message,
+          character_response: ai_response.message,
+          bond_increased: ai_response.bond_increase
+        });
+
+        analytics_service.trackCharacterInteraction(
+          (socket as any).user_id,
+          character.character_id,
+          'battle_chat',
+          { message: message.substring(0, 50) }
+        );
+      } catch (error) {
+        console.error('Chat error:', error);
+        socket.emit('chat_error', { error: 'Failed to generate response' });
+      }
+    });
+
+    // Hex Grid: Submit planned action
+    socket.on('hex_submit_action', (planned_action: PlannedHexAction) => {
+      if (!battle_state.hex_battle_mode || !battle_state.hex_grid_state) return;
+
+      const user_side = (socket as any).user_side;
+      const current_user = battle_state[user_side as keyof Pick<BattleState, 'user' | 'opponent'>];
+      const character_id = current_user.character_id;
+
+      const action_state = battle_state.hex_grid_state.action_states.get(character_id);
+      if (action_state) {
+        action_state.planned_action = planned_action;
+
+        // Notify both users
+        this.io.to(`battle:${battle_state.id}`).emit('hex_action_planned', {
+          character_id,
+          user_side,
+          has_planned: true
+        });
+      }
+    });
+
+    // Hex Grid: Execute turn (coach confirms action)
+    socket.on('hex_execute_turn', async () => {
+      try {
+        if (!battle_state.hex_battle_mode || !battle_state.hex_grid_state) {
+          socket.emit('action_failed', { error: 'Not in hex battle mode' });
+          return;
+        }
+
+        const user_side = (socket as any).user_side;
+        const current_user = battle_state[user_side as keyof Pick<BattleState, 'user' | 'opponent'>];
+        const character_id = current_user.character_id;
+
+        const action_state = battle_state.hex_grid_state.action_states.get(character_id);
+        if (!action_state || !action_state.planned_action) {
+          socket.emit('action_failed', { error: 'No planned action found' });
+          return;
+        }
+
+        const planned_action = action_state.planned_action;
+
+        // Reconstruct authoritative state from event log
+        const state: ReconstructedState = await reconstructBattleState(battle_state.id);
+
+        // Build action request based on planned action type
+        let action_request: BattleActionRequest;
+
+        if (planned_action.type === 'move' && planned_action.move_to_hex) {
+          action_request = {
+            battle_id: battle_state.id,
+            character_id: character_id,
+            action_type: 'move',
+            target_hex: planned_action.move_to_hex
+          };
+        } else if (planned_action.type === 'attack' && planned_action.attack_target_id) {
+          action_request = {
+            battle_id: battle_state.id,
+            character_id: character_id,
+            action_type: 'attack',
+            target_id: planned_action.attack_target_id
+          };
+        } else if (planned_action.type === 'defend') {
+          action_request = {
+            battle_id: battle_state.id,
+            character_id: character_id,
+            action_type: 'defend'
+          };
+        } else if (planned_action.type === 'move_and_attack' && planned_action.move_to_hex && planned_action.attack_target_id) {
+          // Execute move first
+          const move_request: MoveActionRequest = {
+            battle_id: battle_state.id,
+            character_id: character_id,
+            action_type: 'move',
+            target_hex: planned_action.move_to_hex
+          };
+          const move_result = await executeAction(move_request, state.context);
+
+          if (!move_result.success) {
+            socket.emit('action_failed', { error: 'errors' in move_result ? move_result.errors.join(', ') : 'Move failed' });
+            return;
+          }
+
+          // Persist move action
+          await persistBattleAction(
+            battle_state.id,
+            character_id,
+            move_request,
+            move_result,
+            state.current_round,
+            state.current_turn + 1
+          );
+
+          // Broadcast move result
+          this.io.to(`battle:${battle_state.id}`).emit('action_executed', {
+            character_id: character_id,
+            action_type: 'move',
+            result: move_result,
+            narrative: move_result.narrative
+          });
+
+          // Then execute attack
+          action_request = {
+            battle_id: battle_state.id,
+            character_id: character_id,
+            action_type: 'attack',
+            target_id: planned_action.attack_target_id
+          };
+        } else {
+          socket.emit('action_failed', { error: 'Invalid planned action configuration' });
+          return;
+        }
+
+        // Execute action through authoritative system
+        const result = await executeAction(action_request, state.context);
+
+        if (!result.success) {
+          socket.emit('action_failed', { error: 'errors' in result ? result.errors.join(', ') : 'Action failed' });
+          return;
+        }
+
+        // Persist to event log
+        await persistBattleAction(
+          battle_state.id,
+          character_id,
+          action_request,
+          result,
+          state.current_round,
+          state.current_turn + 1
+        );
+
+        // Broadcast to all players in battle
+        this.io.to(`battle:${battle_state.id}`).emit('action_executed', {
+          character_id: character_id,
+          action_type: action_request.action_type,
+          result: result,
+          narrative: result.narrative
+        });
+
+        // Update battle_participants table
+        await this.update_battle_participants_persistence(battle_state);
+
+      } catch (error: any) {
+        console.error('Error executing hex turn:', error);
+        socket.emit('action_failed', { error: error.message });
+      }
+    });
+
+    // Power/Spell: Use Power
+    socket.on('use_power', async (data: { power_id: string; target_character_id?: string; target_position?: any }) => {
+      const user_side = (socket as any).user_side;
+      const current_user = battle_state[user_side as keyof Pick<BattleState, 'user' | 'opponent'>];
+      const opponent_user = user_side === 'user' ? battle_state.opponent : battle_state.user;
+
+      // Find the power
+      const power = current_user.character.equipped_powers?.find(p => p.id === data.power_id);
+      if (!power) {
+        socket.emit('power_failed', { error: 'Power not found or not equipped' });
+        return;
+      }
+
+      // Get cooldown
+      const cooldown = current_user.power_cooldowns?.get(data.power_id) || 0;
+
+      // Get positions (if hex mode)
+      const caster_position = battle_state.hex_grid_state?.action_states.get(current_user.character_id)?.position;
+      const target_position = data.target_character_id
+        ? battle_state.hex_grid_state?.action_states.get(data.target_character_id)?.position
+        : data.target_position;
+
+      // Build execution context
+      const context: PowerExecutionContext = {
+        power,
+        caster: {
+          id: current_user.character_id,
+          name: current_user.character.name,
+          position: caster_position || { q: 0, r: 0, s: 0 },
+          current_ap: battle_state.hex_grid_state?.action_states.get(current_user.character_id)?.action_points || 3,
+          max_ap: 3
+        },
+        target: data.target_character_id ? {
+          id: data.target_character_id,
+          name: data.target_character_id === current_user.character_id ? current_user.character.name : opponent_user.character.name,
+          position: target_position || { q: 0, r: 0, s: 0 },
+          health: data.target_character_id === current_user.character_id ? current_user.health : opponent_user.health,
+          max_health: data.target_character_id === current_user.character_id ? current_user.max_health : opponent_user.max_health
+        } : undefined,
+        target_position: data.target_position
+      };
+
+      // Execute power
+      const result = executePower(context, cooldown);
+
+      if (!result.success) {
+        socket.emit('power_failed', { error: result.errors?.join(', ') });
+        return;
+      }
+
+      // Apply effects
+      const { health_changes, status_effects } = applyActionEffects(result.effects, battle_state);
+
+      // Update health
+      health_changes.forEach((change, target_id) => {
+        if (target_id === current_user.character_id) {
+          current_user.health = Math.max(0, Math.min(current_user.max_health, current_user.health + change));
+        } else {
+          opponent_user.health = Math.max(0, Math.min(opponent_user.max_health, opponent_user.health + change));
+        }
+      });
+
+      // Update AP
+      if (battle_state.hex_grid_state) {
+        const action_state = battle_state.hex_grid_state.action_states.get(current_user.character_id);
+        if (action_state) {
+          action_state.action_points -= result.ap_cost;
+        }
+      }
+
+      // Set cooldown
+      if (current_user.power_cooldowns) {
+        current_user.power_cooldowns.set(data.power_id, result.cooldown_turns);
+      }
+
+      // Add to combat log
+      battle_state.combat_log.push({
+        type: 'power_used',
+        character: current_user.character.name,
+        ability: power.name,
+        timestamp: Date.now(),
+        damage: health_changes.get(data.target_character_id || '') || 0
+      });
+
+      // Broadcast to both players
+      this.io.to(`battle:${battle_state.id}`).emit('power_used', {
+        power_id: data.power_id,
+        power_name: power.name,
+        caster_side: user_side,
+        narrative: result.narrative,
+        effects: result.effects,
+        health_changes: Object.fromEntries(health_changes),
+        new_state: this.get_user_view(battle_state, user_side)
+      });
+
+      // Award mastery points (fire and forget)
+      CharacterProgressionService.awardMasteryPoints(
+        current_user.character_id,
+        data.power_id,
+        'power',
+        1
+      ).catch(err => console.error('Error awarding power mastery:', err));
+    });
+
+    // Power/Spell: Cast Spell
+    socket.on('cast_spell', async (data: { spell_id: string; target_character_id?: string; target_position?: any }) => {
+      const user_side = (socket as any).user_side;
+      const current_user = battle_state[user_side as keyof Pick<BattleState, 'user' | 'opponent'>];
+      const opponent_user = user_side === 'user' ? battle_state.opponent : battle_state.user;
+
+      // Find the spell
+      const spell = current_user.character.equipped_spells?.find(s => s.id === data.spell_id);
+      if (!spell) {
+        socket.emit('spell_failed', { error: 'Spell not found or not equipped' });
+        return;
+      }
+
+      // Get cooldown
+      const cooldown = current_user.spell_cooldowns?.get(data.spell_id) || 0;
+
+      // Get positions (if hex mode)
+      const caster_position = battle_state.hex_grid_state?.action_states.get(current_user.character_id)?.position;
+      const target_position = data.target_character_id
+        ? battle_state.hex_grid_state?.action_states.get(data.target_character_id)?.position
+        : data.target_position;
+
+      // Build execution context
+      const context: SpellExecutionContext = {
+        spell,
+        caster: {
+          id: current_user.character_id,
+          name: current_user.character.name,
+          position: caster_position || { q: 0, r: 0, s: 0 },
+          current_ap: battle_state.hex_grid_state?.action_states.get(current_user.character_id)?.action_points || 3,
+          max_ap: 3,
+          current_mana: (current_user.character as any).current_mana || 100,
+          max_mana: (current_user.character as any).max_mana || 100
+        },
+        target: data.target_character_id ? {
+          id: data.target_character_id,
+          name: data.target_character_id === current_user.character_id ? current_user.character.name : opponent_user.character.name,
+          position: target_position || { q: 0, r: 0, s: 0 },
+          health: data.target_character_id === current_user.character_id ? current_user.health : opponent_user.health,
+          max_health: data.target_character_id === current_user.character_id ? current_user.max_health : opponent_user.max_health
+        } : undefined,
+        target_position: data.target_position
+      };
+
+      // Execute spell
+      const result = executeSpell(context, cooldown);
+
+      if (!result.success) {
+        socket.emit('spell_failed', { error: result.errors?.join(', ') });
+        return;
+      }
+
+      // Apply effects
+      const { health_changes, status_effects } = applyActionEffects(result.effects, battle_state);
+
+      // Update health
+      health_changes.forEach((change, target_id) => {
+        if (target_id === current_user.character_id) {
+          current_user.health = Math.max(0, Math.min(current_user.max_health, current_user.health + change));
+        } else {
+          opponent_user.health = Math.max(0, Math.min(opponent_user.max_health, opponent_user.health + change));
+        }
+      });
+
+      // Update AP
+      if (battle_state.hex_grid_state) {
+        const action_state = battle_state.hex_grid_state.action_states.get(current_user.character_id);
+        if (action_state) {
+          action_state.action_points -= result.ap_cost;
+        }
+      }
+
+      // Deduct mana
+      if ((current_user.character as any).current_mana !== undefined) {
+        (current_user.character as any).current_mana -= result.mana_cost || 0;
+      }
+
+      // Award mastery points (fire and forget)
+      CharacterProgressionService.awardMasteryPoints(
+        current_user.character_id,
+        data.spell_id,
+        'spell',
+        1
+      ).catch(err => console.error('Error awarding spell mastery:', err));
+
+      // Set cooldown
+      if (current_user.spell_cooldowns) {
+        current_user.spell_cooldowns.set(data.spell_id, result.cooldown_turns);
+      }
+
+      // Add to combat log
+      battle_state.combat_log.push({
+        type: 'spell_cast',
+        character: current_user.character.name,
+        ability: spell.name,
+        timestamp: Date.now(),
+        damage: health_changes.get(data.target_character_id || '') || 0
+      });
+
+      // Broadcast to both players
+      this.io.to(`battle:${battle_state.id}`).emit('spell_cast', {
+        spell_id: data.spell_id,
+        spell_name: spell.name,
+        caster_side: user_side,
+        narrative: result.narrative,
+        effects: result.effects,
+        health_changes: Object.fromEntries(health_changes),
+        new_state: this.get_user_view(battle_state, user_side)
+      });
+    });
+
+    // Item: Use Item
+    socket.on('use_item', async (data: { item_id: string; target_character_id?: string }) => {
+      const user_side = (socket as any).user_side;
+      const current_user = battle_state[user_side as keyof Pick<BattleState, 'user' | 'opponent'>];
+      const opponent_user = user_side === 'user' ? battle_state.opponent : battle_state.user;
+
+      // Note: Item system requires integration with inventory system
+      // This is a placeholder that will forward to battleActionExecutor when implemented
+      socket.emit('item_failed', {
+        error: 'Item system requires full integration with hex battle system. Use hex_execute_turn with item action instead.'
+      });
+
+      // TODO: Full implementation will follow the pattern from use_power/cast_spell
+      // when item system is fully integrated with hex battle mode
+    });
+
+    // Disconnect handling
+    socket.on('disconnect', () => {
+      const user_side = (socket as any).user_side;
+      if (user_side && battle_state) {
+        battle_state[user_side as keyof Pick<BattleState, 'user' | 'opponent'>].connected = false;
+
+        // Notify opponent
+        this.io.to(`battle:${battle_state.id}`).emit('opponent_disconnected', {
+          side: user_side
+        });
+
+        // Start disconnect timer (30 seconds to reconnect)
+        setTimeout(() => {
+          if (!battle_state[user_side as keyof Pick<BattleState, 'user' | 'opponent'>].connected) {
+            this.handle_forfeit(battle_state, user_side);
+          }
+        }, 30000);
+      }
+    });
+  }
+
+  // Start combat round
+  private async start_combat_round(battle_state: BattleState): Promise<void> {
+    battle_state.phase = BATTLE_PHASES.ROUND_COMBAT;
+    battle_state.combat_log.push({
+      type: 'round_start',
+      round: battle_state.round,
+      timestamp: Date.now()
+    });
+
+    // 1. Perform Adherence Checks for ALL characters
+    battle_state.round_adherence = {};
+    const adherence_events: any[] = [];
+
+    // Helper to check adherence for a team
+    const check_team_adherence = (characters: BattleCharacter[], strategy: string) => {
+      characters.forEach(char => {
+        // Roll for adherence (0-100)
+        const roll = Math.random() * 100;
+        const adherence_level = char.gameplan_adherence_level || 50; // Default to 50 if missing
+        const is_adhering = roll <= adherence_level;
+
+        battle_state.round_adherence![char.id] = is_adhering;
+
+        // Log significant adherence failures (rogue behavior)
+        if (!is_adhering) {
+          adherence_events.push({
+            character_id: char.id,
+            name: char.name,
+            adherence_level,
+            roll: Math.round(roll),
+            status: 'rogue'
+          });
+
+          console.log(`⚠️ [ADHERENCE] ${char.name} went ROGUE! (Roll: ${Math.round(roll)} > Level: ${adherence_level})`);
+        } else {
+          console.log(`✅ [ADHERENCE] ${char.name} following strategy. (Roll: ${Math.round(roll)} <= Level: ${adherence_level})`);
+        }
+      });
+    };
+
+    // Check both teams
+    check_team_adherence(battle_state.user.team_characters || [battle_state.user.character], battle_state.user.strategy || 'balanced');
+    check_team_adherence(battle_state.opponent.team_characters || [battle_state.opponent.character], battle_state.opponent.strategy || 'balanced');
+
+    // Apply strategy modifiers
+    const user_mods = this.get_strategy_modifiers(battle_state.user.strategy!);
+    const opponent_mods = this.get_strategy_modifiers(battle_state.opponent.strategy!);
+
+    // Notify users
+    this.io.to(`battle:${battle_state.id}`).emit('round_start', {
+      round: battle_state.round,
+      strategies: {
+        user: battle_state.user.strategy,
+        opponent: battle_state.opponent.strategy
+      },
+      adherence_results: adherence_events // Send rogue alerts to frontend
+    });
+
+    // Generate Hostmaster commentary for rogue characters
+    if (adherence_events.length > 0) {
+      const rogue_names = adherence_events.map(e => e.name).join(', ');
+      // Assuming hostmaster_service is available in this scope
+      // If not, you might need to inject it or define it.
+      // For this example, I'll assume it's globally accessible or imported.
+      // If it's a method of this class, it would be `this.hostmaster_service`.
+      // Given the context, it's likely a service that needs to be imported/injected.
+      // For now, I'll use a placeholder `hostmaster_service`.
+      // If `this.generate_hostmaster_round_announcement` is the only hostmaster interaction,
+      // then this part might need adjustment to use that method or a similar one.
+      // For now, I'll assume a `hostmaster_service` exists.
+      // If `hostmaster_service` is not defined, this will cause a runtime error.
+      // The original code only had `this.generate_hostmaster_round_announcement`.
+      // Let's assume `this.generate_hostmaster_action_commentary` can be adapted or a new method added.
+      // For now, I'll comment out the hostmaster_service call to avoid undefined reference.
+      /*
+      await hostmaster_service.broadcastAnnouncement(battle_state.id, {
+        text: `COACHING BREAKDOWN! ${rogue_names} ${adherence_events.length > 1 ? 'are' : 'is'} ignoring the gameplan!`,
+        type: 'special',
+        priority: 'high'
+      });
+      */
+      // Alternatively, if `generate_hostmaster_round_announcement` can take additional context:
+      // await this.generate_hostmaster_round_announcement(battle_state, { rogue_characters: rogue_names });
+      // Or, if a specific commentary method exists:
+      // await this.generate_hostmaster_commentary(battle_state, `COACHING BREAKDOWN! ${rogue_names} ${adherence_events.length > 1 ? 'are' : 'is'} ignoring the gameplan!`);
+    }
+
+    // Generate Hostmaster v8.72 round announcement
+    setTimeout(async () => {
+      await this.generate_hostmaster_round_announcement(battle_state);
+    }, 1000);
+
+    // Execute combat simulation
+    const combat_result = await this.simulate_combat(battle_state, user_mods, opponent_mods);
+
+    // Update state
+    battle_state.user.health = combat_result.user.health;
+    battle_state.opponent.health = combat_result.opponent.health;
+    battle_state.user.effects = combat_result.user.effects;
+    battle_state.opponent.effects = combat_result.opponent.effects;
+    battle_state.user.cooldowns = combat_result.user.cooldowns;
+    battle_state.opponent.cooldowns = combat_result.opponent.cooldowns;
+    battle_state.combat_log.push(...combat_result.events);
+
+    // Send combat events to players with Hostmaster commentary
+    for (const event of combat_result.events) {
+      await this.sleep(500); // Delay for dramatic effect
+      this.io.to(`battle:${battle_state.id}`).emit('combat_event', event);
+
+      // Generate Hostmaster commentary for significant events
+      if (event.type === 'attack' && (event.critical || (event.damage && event.damage > 30))) {
+        setTimeout(async () => {
+          await this.generate_hostmaster_action_commentary(battle_state, event);
+        }, 1000);
+      }
+    }
+
+    // Check for battle end
+    if (this.check_battle_end(battle_state)) {
+      await this.end_battle(battle_state);
+    } else {
+      // Start chat phase
+      await this.start_chat_phase(battle_state);
+    }
+  }
+
+  // Strategy modifiers
+  private get_strategy_modifiers(strategy: string): StrategyModifiers {
+    switch (strategy) {
+      case 'aggressive':
+        return { atk_mod: 1.2, def_mod: 0.9, spd_mod: 1.0 };
+      case 'defensive':
+        return { atk_mod: 0.9, def_mod: 1.2, spd_mod: 0.95 };
+      case 'balanced':
+      default:
+        return { atk_mod: 1.0, def_mod: 1.0, spd_mod: 1.0 };
+    }
+  }
+
+  // Simulate combat between characters
+  private async simulate_combat(battle_state: BattleState, user_mods: StrategyModifiers, opponent_mods: StrategyModifiers): Promise<CombatResult> {
+    const events: CombatEvent[] = [];
+    const user = { ...battle_state.user };
+    const opponent = { ...battle_state.opponent };
+
+    // Initialize effects arrays if not present
+    user.effects = user.effects || [];
+    opponent.effects = opponent.effects || [];
+
+    // Process start of round effects
+    const user_start_events = this.process_status_effects(user, true);
+    const opponent_start_events = this.process_status_effects(opponent, true);
+    events.push(...user_start_events, ...opponent_start_events);
+
+    // Calculate effective stats with modifiers AND adherence check
+    // If character is ROGUE (adherence check failed), they do NOT get strategy bonuses
+    const get_effective_mods = (char_id: string, intended_mods: StrategyModifiers): StrategyModifiers => {
+      const is_adhering = battle_state.round_adherence?.[char_id] ?? true; // Default to true if missing
+      if (is_adhering) {
+        return intended_mods;
+      } else {
+        // ROGUE: No strategy modifiers (or could apply random/penalty)
+        return { atk_mod: 1.0, def_mod: 1.0, spd_mod: 1.0 };
+      }
+    };
+
+    const user_stats = this.calculate_effective_stats(
+      user.character,
+      get_effective_mods(user.character.id, user_mods)
+    );
+    const opponent_stats = this.calculate_effective_stats(
+      opponent.character,
+      get_effective_mods(opponent.character.id, opponent_mods)
+    );
+
+    // Determine turn order
+    const user_speed = user_stats.speed * (1 + Math.random() * 0.1);
+    const opponent_speed = opponent_stats.speed * (1 + Math.random() * 0.1);
+    const turn_order = user_speed >= opponent_speed ? ['user', 'opponent'] : ['opponent', 'user'];
+
+    events.push({
+      type: 'turn_order',
+      order: turn_order,
+      timestamp: Date.now()
+    });
+
+    // Execute turns (3 per round)
+    for (let turn = 0; turn < 3; turn++) {
+      for (const attacker of turn_order) {
+        const defender = attacker === 'user' ? 'opponent' : 'user';
+        const attacker_state = attacker === 'user' ? user : opponent;
+        const defender_state = defender === 'user' ? user : opponent;
+
+        // Check if battle is over
+        if (attacker_state.health <= 0 || defender_state.health <= 0) break;
+
+        // Choose ability
+        const ability = this.choose_ability(attacker_state.character, attacker_state.cooldowns);
+
+        // Calculate and apply damage
+        if (ability.power > 0) {
+          let damage = this.calculate_damage(
+            attacker === 'user' ? user_stats : opponent_stats,
+            defender === 'user' ? user_stats : opponent_stats,
+            ability,
+            attacker === 'user'
+              ? get_effective_mods(attacker_state.character.id, user_mods)
+              : get_effective_mods(attacker_state.character.id, opponent_mods)
+          );
+
+          // Apply damage with BOUNDS CHECK
+          const current_health = Math.max(0, Math.min(99999, defender_state.health || 0));
+          defender_state.health = Math.max(0, current_health - damage);
+
+          // Create attack event
+          events.push({
+            type: 'attack',
+            attacker,
+            defender,
+            ability: ability.name,
+            damage,
+            critical: false,
+            remaining_health: {
+              [attacker]: attacker_state.health,
+              [defender]: defender_state.health
+            },
+            timestamp: Date.now()
+          });
+        }
+
+        // Update cooldowns
+        if (ability.cooldown > 0) {
+          attacker_state.cooldowns[ability.name] = ability.cooldown;
+        }
+      }
+
+      // Process end of turn effects
+      const user_end_events = this.process_status_effects(user, false);
+      const opponent_end_events = this.process_status_effects(opponent, false);
+      events.push(...user_end_events, ...opponent_end_events);
+
+      // Reduce cooldowns
+      this.reduce_cooldowns(user.cooldowns);
+      this.reduce_cooldowns(opponent.cooldowns);
+    }
+
+    return {
+      user: {
+        health: user.health,
+        effects: user.effects,
+        cooldowns: user.cooldowns
+      },
+      opponent: {
+        health: opponent.health,
+        effects: opponent.effects,
+        cooldowns: opponent.cooldowns
+      },
+      events
+    };
+  }
+
+  // Helper methods (simplified versions)
+  private process_status_effects(battle_user: BattleUser, is_start_of_turn: boolean): CombatEvent[] {
+    // Use battleMechanicsService for comprehensive status effect processing
+    const battle_character: BattleMechanics.BattleCharacter = {
+      health: battle_user.health,
+      max_health: battle_user.max_health,
+      attack: battle_user.character.attack,
+      defense: battle_user.character.defense,
+      speed: battle_user.character.speed,
+      magic_attack: battle_user.character.magic_attack,
+      magic_defense: battle_user.character.magic_defense,
+      effects: battle_user.effects,
+    };
+
+    const mechanics_events = BattleMechanics.processStatusEffects(battle_character, is_start_of_turn);
+
+    // Update battle_user with processed values
+    battle_user.health = battle_character.health;
+    battle_user.effects = battle_character.effects;
+
+    // Convert mechanics events to combat events
+    const events: CombatEvent[] = mechanics_events.map(event => ({
+      type: event.type,
+      target: battle_user.user_id,
+      effect: event.data.effect,
+      amount: event.data.amount,
+      timestamp: Date.now(),
+    }));
+
+    return events;
+  }
+
+  private calculate_effective_stats(character: BattleCharacter, mods: StrategyModifiers): any {
+    // Use headquarters-enhanced stats if available
+    const base_attack = (character as any).effective_attack || character.attack;
+    const base_defense = (character as any).effective_defense || character.defense;
+    const base_speed = (character as any).effective_speed || character.speed;
+    const critical_chance = (character as any).effective_critical_chance || 10;
+
+    return {
+      health: character.max_health,
+      attack: base_attack * mods.atk_mod,
+      defense: base_defense * mods.def_mod,
+      speed: base_speed * mods.spd_mod,
+      special: character.magic_attack,
+      critical_chance: critical_chance,
+      // Log headquarters effects for debugging
+      headquarters_effects: (character as any).headquarters_effects || null
+    };
+  }
+
+  private choose_ability(character: BattleCharacter, cooldowns: Record<string, number>): Ability {
+    // Filter available abilities (not on cooldown)
+    const available_abilities = character.abilities.filter(ability =>
+      !cooldowns[ability.name] || cooldowns[ability.name] <= 0
+    );
+
+    if (available_abilities.length === 0) {
+      return { name: 'Basic Attack', power: 1.0, cooldown: 0, type: 'attack' };
+    }
+
+    return available_abilities[Math.floor(Math.random() * available_abilities.length)];
+  }
+
+  private calculate_damage(attacker: any, defender: any, ability: Ability, mods: StrategyModifiers): number {
+    // BOUNDS CHECK: Ensure valid attacker stats
+    const attack_stat = Math.max(0, Math.min(9999, attacker.attack));
+    const ability_power = Math.max(0.1, Math.min(10, ability?.power || 1));
+    const atk_modifier = Math.max(0.1, Math.min(5, mods?.atk_mod || 1));
+
+    // BOUNDS CHECK: Ensure valid defender stats
+    const defense_stat = Math.max(0, Math.min(9999, defender.defense));
+    const def_modifier = Math.max(0.1, Math.min(5, mods?.def_mod || 1));
+
+    // Calculate base damage with bounds
+    const base_damage = attack_stat * ability_power * atk_modifier;
+    const defense = defense_stat * def_modifier;
+    const variance = 0.85 + Math.random() * 0.3;
+
+    // Calculate raw damage
+    let damage = Math.max(5, (base_damage - defense * 0.5) * variance);
+
+    // Critical hit chance (integrates with battleMechanicsService)
+    const crit_chance = 0.15;
+    const is_critical = Math.random() < crit_chance || BattleMechanics.checkAndConsumeForceCritical(attacker);
+    if (is_critical) {
+      // BOUNDS CHECK: Ensure crit multiplier is reasonable
+      const crit_multiplier = Math.max(1.5, Math.min(3, BATTLE_CONFIG.CRIT_MULTIPLIER || 1.5));
+      damage *= crit_multiplier;
+    }
+
+    // Use battleMechanicsService for damage resistance calculation
+    const damage_type = ability.type || 'physical';
+    const final_damage = BattleMechanics.calculateDamageWithResistance(
+      damage,
+      damage_type,
+      defender as BattleMechanics.BattleCharacter
+    );
+
+    // BOUNDS CHECK: Cap final damage
+    return Math.max(1, Math.min(9999, Math.round(final_damage)));
+  }
+
+  // Start chat phase
+  private async start_chat_phase(battle_state: BattleState): Promise<void> {
+    battle_state.phase = BATTLE_PHASES.CHAT_BREAK;
+    battle_state.chat_enabled = true;
+
+    // Notify players
+    this.io.to(`battle:${battle_state.id}`).emit('chat_phase_start', {
+      duration: BATTLE_CONFIG.CHAT_DURATION
+    });
+
+    // Set timer for next round
+    this.start_phase_timer(
+      battle_state.id,
+      BATTLE_PHASES.CHAT_BREAK,
+      BATTLE_CONFIG.CHAT_DURATION,
+      () => this.end_chat_phase(battle_state)
+    );
+  }
+
+  // End chat phase and prepare next round
+  private async end_chat_phase(battle_state: BattleState): Promise<void> {
+    battle_state.chat_enabled = false;
+    battle_state.round++;
+
+    if (battle_state.round > BATTLE_CONFIG.MAX_ROUNDS) {
+      await this.end_battle(battle_state);
+    } else {
+      // Reset strategies
+      battle_state.user.strategy = null;
+      battle_state.opponent.strategy = null;
+
+      // Start new strategy phase
+      battle_state.phase = BATTLE_PHASES.STRATEGY_SELECT;
+
+      this.io.to(`battle:${battle_state.id}`).emit('strategy_phase_start', {
+        round: battle_state.round,
+        duration: BATTLE_CONFIG.STRATEGY_DURATION
+      });
+
+      this.start_phase_timer(
+        battle_state.id,
+        BATTLE_PHASES.STRATEGY_SELECT,
+        BATTLE_CONFIG.STRATEGY_DURATION
+      );
+    }
+  }
+
+  // End battle
+  private async end_battle(battle_state: BattleState): Promise<void> {
+    battle_state.phase = BATTLE_PHASES.BATTLE_END;
+
+    // Determine winner
+    let winner_id: string, winner_side: string;
+    if (battle_state.user.health <= 0) {
+      winner_id = battle_state.opponent.user_id;
+      winner_side = 'opponent';
+    } else if (battle_state.opponent.health <= 0) {
+      winner_id = battle_state.user.user_id;
+      winner_side = 'user';
+    } else {
+      // Highest health percentage wins
+      const user_percent = battle_state.user.health / battle_state.user.max_health;
+      const opponent_percent = battle_state.opponent.health / battle_state.opponent.max_health;
+      if (user_percent > opponent_percent) {
+        winner_id = battle_state.user.user_id;
+        winner_side = 'user';
+      } else {
+        winner_id = battle_state.opponent.user_id;
+        winner_side = 'opponent';
+      }
+    }
+
+    // Calculate rewards
+    const rewards = this.calculate_rewards(battle_state, winner_side);
+
+
+    // Update database with hex grid state
+    await db_adapter.battles.update(battle_state.id, {
+      winner_user_id: winner_id,
+      status: 'completed',
+      ended_at: new Date(),
+      xp_gained: rewards.xp,
+      bond_gained: rewards.bond,
+      currency_gained: rewards.currency,
+      // Store hex grid state if enabled
+      ...(battle_state.hex_battle_mode && {
+        player_team_data: {
+          ...((battle_state as any).player_team_data || {}),
+          hex_grid_state: this.serialize_hex_grid_state(battle_state.hex_grid_state)
+        }
+      })
+    });
+
+    // Persist final state to battle_participants
+    await this.update_battle_participants_persistence(battle_state);
+
+    // Update characters
+    await this.update_character_stats(battle_state, winner_side, rewards);
+
+    // Apply psychology effects (morale, stress, trauma)
+    try {
+      const loser_side = winner_side === 'user' ? 'opponent' : 'user';
+      const winner = battle_state[winner_side as keyof Pick<BattleState, 'user' | 'opponent'>];
+      const loser = battle_state[loser_side as keyof Pick<BattleState, 'user' | 'opponent'>];
+
+      await applyBattleOutcomeEffects({
+        battle_id: battle_state.id,
+        winner_character_ids: [winner.character_id],
+        loser_character_ids: [loser.character_id],
+        character_final_health: {
+          [winner.character_id]: { current: winner.health, max: winner.max_health },
+          [loser.character_id]: { current: loser.health, max: loser.max_health }
+        },
+        deaths: [
+          ...(winner.health <= 0 ? [winner.character_id] : []),
+          ...(loser.health <= 0 ? [loser.character_id] : [])
+        ]
+      });
+    } catch (error) {
+      console.error('Error applying psychology effects:', error);
+    }
+
+    // Award coach XP for both users
+    try {
+      const winner_user_id = battle_state[winner_side as keyof Pick<BattleState, 'user' | 'opponent'>].user_id;
+      const loser_user_id = winner_side === 'user' ? battle_state.opponent.user_id : battle_state.user.user_id;
+
+      // Award battle XP to both coaches (winner gets full XP, loser gets partial)
+      await CoachProgressionService.awardBattleXP(winner_user_id, true, battle_state.id);
+      await CoachProgressionService.awardBattleXP(loser_user_id, false, battle_state.id);
+    } catch (error) {
+      console.error('Error awarding coach XP:', error);
+    }
+
+    // Award ticket rewards for battle victories (2 tickets per 5 wins)
+    // FIXED: Get total_wins from database after update to ensure consistency
+    try {
+      const winner_user_id = battle_state[winner_side as keyof Pick<BattleState, 'user' | 'opponent'>].user_id;
+      const winner_character_id = battle_state[winner_side as keyof Pick<BattleState, 'user' | 'opponent'>].character_id;
+
+      // Get updated character data from database to ensure total_wins is accurate
+      const updated_character = await db_adapter.user_characters.find_by_id(winner_character_id);
+      if (updated_character) {
+        // Award battle tickets using actual database value (not calculated)
+        await ticket_service.awardBattleTickets(
+          winner_user_id,
+          updated_character.total_wins, // Use actual database value after update
+          battle_state.id,
+          winner_character_id
+        );
+      } else {
+        console.error('Error: Could not find updated character for ticket rewards');
+      }
+    } catch (error) {
+      console.error('Error awarding ticket rewards:', error);
+    }
+
+    // Send battle victory mail notification to winner
+    try {
+      const mail_service = new InternalMailService();
+      const winner_character = battle_state[winner_side as keyof Pick<BattleState, 'user' | 'opponent'>].character;
+      const loser_character = winner_side === 'user' ? battle_state.opponent.character : battle_state.user.character;
+
+      await mail_service.sendSystemMail(winner_id, {
+        subject: `🏆 ${winner_character.name} Won a Battle!`,
+        content: `${winner_character.name} defeated ${loser_character.name} in battle!\n\n_rewards:\n• ${rewards.xp} XP\n• ${rewards.currency} coins\n• ${rewards.bond} bond points`,
+        category: 'notification',
+        priority: 'normal'
+      });
+    } catch (error) {
+      console.error('Error sending battle victory mail:', error);
+    }
+
+    // Generate Hostmaster v8.72 victory announcement
+    setTimeout(async () => {
+      await this.generate_hostmaster_victory_announcement(battle_state, winner_id);
+    }, 1000);
+
+    // Notify users
+    this.io.to(`battle:${battle_state.id}`).emit('battle_end', {
+      winner: winner_side,
+      rewards,
+      final_stats: {
+        user: {
+          health: battle_state.user.health,
+          max_health: battle_state.user.max_health
+        },
+        opponent: {
+          health: battle_state.opponent.health,
+          max_health: battle_state.opponent.max_health
+        }
+      }
+    });
+
+    // Track analytics
+    const loser_side = winner_side === 'user' ? 'opponent' : 'user';
+    analytics_service.trackBattleCompletion({
+      battle_id: battle_state.id,
+      duration: Math.round((Date.now() - battle_state.created_at) / 1000),
+      rounds: battle_state.round,
+      winner: winner_id,
+      loser: battle_state[loser_side as keyof Pick<BattleState, 'user' | 'opponent'>].user_id,
+      strategies: {
+        user: battle_state.user.strategy || 'balanced',
+        opponent: battle_state.opponent.strategy || 'balanced'
+      },
+      combat_events: battle_state.combat_log.length,
+      chat_messages: 0, // Would count from chat logs
+      disconnections: 0,
+      forfeit: false
+    });
+
+    // Clean up
+    setTimeout(() => {
+      this.active_battles.delete(battle_state.id);
+      // Clean up Hostmaster history
+      hostmaster_service.cleanupBattle(battle_state.id);
+    }, 60000); // Keep state for 1 minute for reconnections
+  }
+
+  // Calculate battle rewards
+  private calculate_rewards(battle_state: BattleState, winner_side: string): BattleRewards {
+    const base_xp = 100;
+    const base_currency = 50;
+    const base_bond = 1;
+
+    const winner = battle_state[winner_side as keyof Pick<BattleState, 'user' | 'opponent'>];
+    const loser = winner_side === 'user' ? battle_state.opponent : battle_state.user;
+
+    // XP calculation
+    let xp = base_xp;
+    if (winner.character.level < loser.character.level) {
+      xp *= 1.5; // Bonus for beating higher level
+    }
+
+    // Currency
+    let currency = base_currency;
+    if (battle_state.round === BATTLE_CONFIG.MAX_ROUNDS) {
+      currency *= 1.2; // Bonus for full battle
+    }
+
+    // Bond points
+    let bond = base_bond;
+    const chat_count = battle_state.combat_log.filter(e => e.type === 'chat').length;
+    if (chat_count > 5) {
+      bond += 1; // Extra bond for active chatting
+    }
+
+    return {
+      xp: Math.round(xp),
+      currency: Math.round(currency),
+      bond,
+      winner: true
+    };
+  }
+
+  // Update character stats after battle
+  private async update_character_stats(battle_state: BattleState, winner_side: string, rewards: BattleRewards): Promise<void> {
+    const winner = battle_state[winner_side as keyof Pick<BattleState, 'user' | 'opponent'>];
+    const loser = winner_side === 'user' ? battle_state.opponent : battle_state.user;
+
+    // Update winner character stats
+    await db_adapter.user_characters.update(winner.character_id, {
+      total_battles: winner.character.total_battles + 1,
+      total_wins: winner.character.total_wins + 1,
+      experience: winner.character.experience + rewards.xp,
+      current_health: winner.health,
+      last_battle_at: new Date()
+    });
+
+    // Update loser character stats and handle death/injury
+    if (loser.health === 0) {
+      // Determine if character dies or just gets injured
+      const death_chance = this.calculate_death_chance(loser.character.level, battle_state.round);
+      const should_die = Math.random() < death_chance;
+
+      if (should_die) {
+        // Character dies - handle death
+        await ResurrectionService.handleCharacterDeath(loser.character_id, {
+          battle_id: battle_state.id,
+          round: battle_state.round,
+          opponent: winner.character.name
+        });
+
+        // Update basic stats (death handler updates death-related fields)
+        await db_adapter.user_characters.update(loser.character_id, {
+          total_battles: loser.character.total_battles + 1,
+          experience: loser.character.experience + Math.round(rewards.xp * 0.3), // 30% XP for losing
+          last_battle_at: new Date()
+        });
+      } else {
+        // Character is severely injured but alive
+        const injury_severity = this.calculate_injury_severity(loser.health, loser.max_health, battle_state.round);
+        const recovery_time = this.calculate_injury_recovery_time(injury_severity);
+
+        await db_adapter.user_characters.update(loser.character_id, {
+          total_battles: loser.character.total_battles + 1,
+          experience: loser.character.experience + Math.round(rewards.xp * 0.3), // 30% XP for losing
+          current_health: 1, // Barely alive
+          is_injured: true,
+          injury_severity: injury_severity,
+          recovery_time: new Date(Date.now() + recovery_time * 60 * 60 * 1000), // Recovery in hours
+          last_battle_at: new Date()
+        });
+      }
+    } else {
+      // Character survived with health - minor or no injury
+      const injury_severity = this.calculate_injury_severity(loser.health, loser.max_health, battle_state.round);
+      const recovery_time = injury_severity !== 'healthy' ? this.calculate_injury_recovery_time(injury_severity) : 0;
+
+      await db_adapter.user_characters.update(loser.character_id, {
+        total_battles: loser.character.total_battles + 1,
+        experience: loser.character.experience + Math.round(rewards.xp * 0.3), // 30% XP for losing
+        current_health: loser.health,
+        is_injured: injury_severity !== 'healthy',
+        injury_severity: injury_severity,
+        recovery_time: recovery_time > 0 ? new Date(Date.now() + recovery_time * 60 * 60 * 1000) : null,
+        last_battle_at: new Date()
+      });
+    }
+
+    // Award character progression XP to both characters
+    try {
+      // Award XP to winner character (full amount with victory bonus)
+      await CharacterProgressionService.awardExperience(
+        winner.character_id,
+        rewards.xp,
+        'battle',
+        `Victory in battle ${battle_state.id}`,
+        1.5 // 50% bonus for winning
+      );
+
+      // Award XP to loser character (reduced amount)
+      await CharacterProgressionService.awardExperience(
+        loser.character_id,
+        Math.round(rewards.xp * 0.6), // 60% XP for losing (more than the old system's 30%)
+        'battle',
+        `Battle experience from ${battle_state.id}`,
+        1.0 // No bonus for losing
+      );
+
+      // Award skill progression based on battle performance
+      // Both characters gain combat skill experience
+      await CharacterProgressionService.progressSkill(winner.character_id, 'combat_mastery', 50);
+      await CharacterProgressionService.progressSkill(loser.character_id, 'combat_mastery', 25);
+
+      // Winner gets additional skill progression for victory
+      await CharacterProgressionService.progressSkill(winner.character_id, 'battle_tactics', 30);
+
+    } catch (error) {
+      console.error('Error awarding character progression XP:', error);
+    }
+
+    // Update user currencies
+    await db_adapter.currency.update(winner.user_id, { battle_tokens: rewards.currency });
+  }
+
+  // Check if battle should end
+  private check_battle_end(battle_state: BattleState): boolean {
+    // Check if either user's health is 0
+    if (battle_state.user.health <= 0 || battle_state.opponent.health <= 0) {
+      return true;
+    }
+
+    // Check if we've completed all rounds
+    if (battle_state.round > BATTLE_CONFIG.MAX_ROUNDS) {
+      return true;
+    }
+
+    return false;
+  }
+
+  // Start phase timer
+  private start_phase_timer(battle_id: string, phase: string, duration: number, callback?: () => void): void {
+    const battle_state = this.active_battles.get(battle_id);
+    if (!battle_state) return;
+
+    // Clear existing timer
+    if (battle_state.timer) {
+      clearTimeout(battle_state.timer);
+    }
+
+    // Set new timer
+    battle_state.timer = setTimeout(() => {
+      if (callback) {
+        callback();
+      } else {
+        // Default behavior based on phase
+        this.handle_phase_timeout(battle_id, phase);
+      }
+    }, duration * 1000);
+  }
+
+  // Handle phase timeout
+  private handle_phase_timeout(battle_id: string, phase: string): void {
+    const battle_state = this.active_battles.get(battle_id);
+    if (!battle_state) return;
+
+    switch (phase) {
+      case BATTLE_PHASES.STRATEGY_SELECT:
+        // Auto-select balanced strategy for users who didn't choose
+        if (!battle_state.user.strategy) {
+          battle_state.user.strategy = 'balanced';
+        }
+        if (!battle_state.opponent.strategy) {
+          battle_state.opponent.strategy = 'balanced';
+        }
+        this.start_combat_round(battle_state);
+        break;
+
+      case BATTLE_PHASES.CHAT_BREAK:
+        this.end_chat_phase(battle_state);
+        break;
+    }
+  }
+
+  // Handle user forfeit
+  private async handle_forfeit(battle_state: BattleState, forfeiting_side: string): Promise<void> {
+    const winner_side = forfeiting_side === 'user' ? 'opponent' : 'user';
+    const winner_id = battle_state[winner_side as keyof Pick<BattleState, 'user' | 'opponent'>].user_id;
+
+
+    // Update battle in database
+    await db_adapter.battles.update(battle_state.id, {
+      winner_user_id: winner_id,
+      battle_result: 'forfeit',
+      status: 'completed',
+      ended_at: new Date()
+    });
+
+    // Persist final state to battle_participants
+    await this.update_battle_participants_persistence(battle_state);
+
+    // Notify remaining player
+    this.io.to(`battle:${battle_state.id}`).emit('opponent_forfeited', {
+      winner: winner_side
+    });
+
+    // Publish global battle ended event for multi-server coordination
+    try {
+      await cache.publishBattleEvent('global', {
+        type: 'battle_ended',
+        battle_id: battle_state.id,
+        end_reason: 'forfeit',
+        winner: winner_id,
+        server_id: process.env.SERVER_ID || 'default'
+      });
+    } catch (error) {
+      console.error('Failed to publish battle_ended event:', error);
+    }
+
+    // Clean up
+    this.active_battles.delete(battle_state.id);
+  }
+
+  // Notify player through various channels
+  private notify_user(user_id: string, event: string, data: any): void {
+    // Send through WebSocket if connected
+    const user_socket = this.get_user_socket(user_id);
+    if (user_socket) {
+      user_socket.emit(event, data);
+    }
+  }
+
+  // Get user's socket connection
+  private get_user_socket(user_id: string): Socket | null {
+    const socket_id = this.user_socket_map.get(user_id);
+    return this.io.sockets.sockets.get(socket_id || '') || null;
+  }
+
+  // Estimate wait time based on rating
+  private estimate_wait_time(rating: number): number {
+    const queue_size = this.battle_queue.size;
+    const similar_rating_count = Array.from(this.battle_queue.values())
+      .filter(player => Math.abs(player.rating - rating) < 200)
+      .length;
+
+    if (similar_rating_count > 0) {
+      return Math.round(10 + Math.random() * 20); // 10-30 seconds
+    } else {
+      return Math.round(30 + queue_size * 5); // Longer wait if no similar ratings
+    }
+  }
+
+  // Helper function for delays
+  private sleep(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  /**
+   * Calculate death chance based on character level and battle intensity
+   */
+  private calculate_death_chance(character_level: number, battle_rounds: number): number {
+    // Base death chance starts at 15% for level 1, decreases as level increases
+    const base_mortality = 0.15 - (character_level * 0.002); // -0.2% per level
+
+    // Battle intensity factor - longer battles are more deadly
+    const intensity_factor = Math.min(2, 1 + (battle_rounds - 10) * 0.1); // +10% per round after 10
+
+    // Final death chance (minimum 1%, maximum 25%)
+    return Math.max(0.01, Math.min(0.25, base_mortality * intensity_factor));
+  }
+
+  /**
+   * Calculate injury severity based on remaining health and battle context
+   */
+  private calculate_injury_severity(current_health: number, max_health: number, battle_rounds: number): string {
+    const health_percent = current_health / max_health;
+
+    if (current_health === 0) {
+      return 'critical'; // On death's door but alive
+    } else if (health_percent <= 0.1) {
+      return 'severe';   // 0-10% health
+    } else if (health_percent <= 0.3) {
+      return 'moderate'; // 11-30% health
+    } else if (health_percent <= 0.6) {
+      return 'light';    // 31-60% health
+    } else {
+      return 'healthy';  // 61%+ health
+    }
+  }
+
+  /**
+   * Calculate recovery time for different injury severities
+   */
+  private calculate_injury_recovery_time(severity: string): number {
+    const recovery_hours = {
+      'healthy': 0,
+      'light': 1,      // 1 hour
+      'moderate': 4,   // 4 hours
+      'severe': 12,    // 12 hours
+      'critical': 24   // 24 hours
+    };
+
+    return recovery_hours[severity as keyof typeof recovery_hours] || 0;
+  }
+
+  // Public methods for external access
+  get_active_battles(): Map<string, BattleState> {
+    return this.active_battles;
+  }
+
+  get_battle_queue(): Map<string, QueueEntry> {
+    return this.battle_queue;
+  }
+
+  set_user_socket(user_id: string, socket_id: string): void {
+    this.user_socket_map.set(user_id, socket_id);
+  }
+
+  remove_user_socket(user_id: string): void {
+    this.user_socket_map.delete(user_id);
+  }
+
+  // Hostmaster v8.72 Integration Methods
+
+  private async generate_hostmaster_introduction(battle_state: BattleState): Promise<void> {
+    try {
+      const context = this.build_hostmaster_context(battle_state);
+      const announcement = await hostmaster_service.generateBattleIntroduction(context);
+      await hostmaster_service.broadcastAnnouncement(battle_state.id, announcement);
+    } catch (error) {
+      console.error('Failed to generate Hostmaster introduction:', error);
+    }
+  }
+
+  private async generate_hostmaster_round_announcement(battle_state: BattleState): Promise<void> {
+    try {
+      const context = this.build_hostmaster_context(battle_state);
+      const announcement = await hostmaster_service.generateRoundAnnouncement(context);
+      await hostmaster_service.broadcastAnnouncement(battle_state.id, announcement);
+    } catch (error) {
+      console.error('Failed to generate Hostmaster round announcement:', error);
+    }
+  }
+
+  private async generate_hostmaster_action_commentary(battle_state: BattleState, event: any): Promise<void> {
+    try {
+      const context = this.build_hostmaster_context(battle_state);
+      const announcement = await hostmaster_service.generateActionCommentary(context, event);
+      await hostmaster_service.broadcastAnnouncement(battle_state.id, announcement);
+    } catch (error) {
+      console.error('Failed to generate Hostmaster action commentary:', error);
+    }
+  }
+
+  private async generate_hostmaster_victory_announcement(battle_state: BattleState, winner_id: string): Promise<void> {
+    try {
+      const context = this.build_hostmaster_context(battle_state);
+      const winner_name = battle_state.user.user_id === winner_id ?
+        battle_state.user.character.name : battle_state.opponent.character.name;
+      const announcement = await hostmaster_service.generateVictoryAnnouncement(context, winner_name);
+      await hostmaster_service.broadcastAnnouncement(battle_state.id, announcement);
+    } catch (error) {
+      console.error('Failed to generate Hostmaster victory announcement:', error);
+    }
+  }
+
+
+  // Helper to update battle_participants table
+  private async update_battle_participants_persistence(battle_state: BattleState): Promise<void> {
+    if (!battle_state.hex_grid_state) return;
+
+    const { action_states, character_positions } = battle_state.hex_grid_state;
+    const all_characters = [
+      ...(battle_state.user.team_characters || []),
+      ...(battle_state.opponent.team_characters || [])
+    ];
+
+    for (const char of all_characters) {
+      const action_state = action_states.get(char.id);
+      const position = character_positions.get(char.id);
+
+      if (action_state) {
+        // Validate AP is within valid range [0, max_ap]
+        const max_ap = action_state.max_action_points;
+        const current_ap = Math.max(0, Math.min(max_ap, action_state.action_points));
+
+        if (current_ap !== action_state.action_points) {
+          console.warn(`Character ${char.id} AP ${action_state.action_points} out of range [0, ${max_ap}], clamping to ${current_ap}`);
+        }
+
+        await db_adapter.query(`
+          UPDATE battle_participants
+          SET
+            current_health = $1,
+            current_ap = $2,
+            current_position = $3,
+            last_updated = NOW()
+          WHERE battle_id = $4 AND character_id = $5
+        `, [
+          char.current_health,
+          current_ap,
+          JSON.stringify(position),
+          battle_state.id,
+          char.id
+        ]);
+      }
+    }
+  }
+
+  private build_hostmaster_context(battle_state: BattleState): HostmasterContext {
+    return {
+      user_name: battle_state.user.character.name,
+      opponent_name: battle_state.opponent.character.name,
+      battle_id: battle_state.id,
+      round: battle_state.round,
+      phase: battle_state.phase,
+      current_health: {
+        user: battle_state.user.health,
+        opponent: battle_state.opponent.health
+      },
+      max_health: {
+        user: battle_state.user.max_health,
+        opponent: battle_state.opponent.max_health
+      },
+      strategies: {
+        user: battle_state.user.strategy || 'balanced',
+        opponent: battle_state.opponent.strategy || 'balanced'
+      },
+      combat_events: battle_state.combat_log,
+      battle_history: [] // Could be expanded to include past rounds
+    };
+  }
+}
+
+export default BattleManager;

@@ -1,0 +1,4 @@
+{
+  "buildCommand": "npm run build",
+  "installCommand": "bash ../install-submodules.sh && npm install"
+}

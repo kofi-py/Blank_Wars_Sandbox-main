@@ -1,0 +1,3895 @@
+import axios from 'axios';
+import dotenv from 'dotenv';
+import EventContextService from './eventContextService';
+import { encode } from 'gpt-3-encoder'; // for token counting
+import { Readable } from 'node:stream';
+import { webhook_response_store } from './webhookResponseStore';
+import { query } from '../database/index';
+import Open_ai from 'openai';
+
+const openai = new Open_ai({
+  apiKey: process.env.OPENAI_API_KEY
+});
+
+const AGI_DEBUG = process.env.AGI_DEBUG === '1' || process.env.AGI_DEBUG === 'true';
+// No MAX_COMPLETION_TOKENS - character prompts handle response length per company policy
+function redact<T extends Record<string, any>>(o: T): T {
+  const clone = { ...o };
+  if ('Authorization' in clone) (clone as any).Authorization = '[redacted]';
+  return clone as T;
+}
+
+export class DigestUnavailableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'DigestUnavailableError';
+  }
+}
+dotenv.config();
+
+// NO FALLBACKS ALLOWED - polling fallback has been removed
+
+const API_KEY = process.env.LOCALAI_API_KEY || '';
+const MODEL = process.env.LOCALAI_MODEL || 'llama-3.2-3b-instruct';
+
+// Duplicate detection for patient responses
+function calculateSimilarity(str1: string, str2: string): number {
+  // Simple Jaccard similarity (intersection / union of words)
+  const words1 = new Set(str1.split(/\s+/));
+  const words2 = new Set(str2.split(/\s+/));
+
+  const intersection = new Set([...words1].filter(word => words2.has(word)));
+  const union = new Set([...words1, ...words2]);
+
+  return intersection.size / union.size;
+}
+
+// Global storage for patient response duplicate detection
+declare global {
+  var recent_patient_replies: Map<string, {
+    normalized: string;
+    timestamp: number;
+    original: string;
+    character_name: string;
+  }>;
+}
+
+// Initialize global storage if not exists
+if (!global.recent_patient_replies) {
+  global.recent_patient_replies = new Map();
+}
+
+interface MessageResponse {
+  message_id?: string;
+  status?: string;
+  content?: string;
+  text?: string;
+  error?: string;
+  final?: boolean;
+}
+
+interface LocalAGIConfig {
+  base_url: string;
+}
+
+interface AgentConfig {
+  name: string;
+  prompt: string;
+  model: string;
+}
+
+interface AgentState {
+  agent_id: string;
+  tokens_used: number;
+  model_max_tokens: number;
+  relay_threshold: number; // percentage before triggering relay
+}
+
+// Helper function to add duplicate detection to patient prompts
+function addPatientDuplicateDetection(character_name: string, session_key?: string): string {
+  const key = session_key || `patient_${character_name.toLowerCase().replace(/\s+/g, '_')}`;
+
+  // Check for recent duplicate responses
+  const recent_replies = [];
+  const now = Date.now();
+
+  // Collect recent responses for this character (last 5 responses max)
+  for (const [k, v] of global.recent_patient_replies.entries()) {
+    if (k.startsWith(key)) {
+      recent_replies.push(v);
+    }
+  }
+  // Sort by timestamp and keep only the most recent 5
+  recent_replies.sort((a, b) => b.timestamp - a.timestamp);
+  recent_replies.splice(5);
+
+  let duplicate_instruction = '';
+
+  if (recent_replies.length > 0) {
+    console.log(`🔍 [PATIENT-DUPLICATE-CHECK] Found ${recent_replies.length} recent responses for ${character_name}`);
+
+    // Extract commonly repeated phrases (3+ words that appear multiple times)
+    const all_phrases = new Set<string>();
+    const repeated_phrases = new Set<string>();
+
+    for (const reply of recent_replies) {
+      const words = reply.normalized.split(/\s+/);
+      // Check for 3-6 word phrases
+      for (let len = 3; len <= 6; len++) {
+        for (let i = 0; i <= words.length - len; i++) {
+          const phrase = words.slice(i, i + len).join(' ');
+          if (all_phrases.has(phrase)) {
+            repeated_phrases.add(phrase);
+          }
+          all_phrases.add(phrase);
+        }
+      }
+    }
+
+    if (repeated_phrases.size > 0) {
+      const phrases_to_avoid = Array.from(repeated_phrases).slice(0, 5).join('", "');
+      duplicate_instruction = `
+
+IMPORTANT - AVOID REPETITION: You've recently used these exact phrases: "${phrases_to_avoid}"
+Express your thoughts differently. Use synonyms, vary your sentence structure, and avoid these specific word combinations.
+You can discuss the same topics but must use fresh language and different expressions.`;
+
+      console.log(`⚠️ [PATIENT-DUPLICATE-CHECK] Detected repeated phrases: ${phrases_to_avoid}`);
+    }
+  }
+
+  // Volume-based cleanup: Keep only the most recent 8 responses per character
+  const all_character_responses = [];
+  for (const [k, v] of global.recent_patient_replies.entries()) {
+    if (k.startsWith(key)) {
+      all_character_responses.push({ key: k, value: v });
+    }
+  }
+
+  if (all_character_responses.length > 8) {
+    all_character_responses.sort((a, b) => b.value.timestamp - a.value.timestamp);
+    const to_delete = all_character_responses.slice(8);
+    for (const item of to_delete) {
+      global.recent_patient_replies.delete(item.key);
+    }
+  }
+
+  return duplicate_instruction;
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// HOLMES PATIENT THERAPY PROMPT - Standalone Function
+// ═══════════════════════════════════════════════════════════════════════════
+
+async function buildHolmesPatientPrompt(
+  roommates: string[],
+  memory: string,
+  conversation_history: string,
+  user_message: string,
+  wallet: number,
+  debt: number,
+  therapist_name: string
+): Promise<string> {
+  // Fetch comedian style from database
+  const comedian_result = await query('SELECT cs.comedian_name, cs.comedy_style FROM characters c JOIN comedian_styles cs ON c.comedian_style_id = cs.id WHERE c.id = $1', ['holmes']);
+  const comedian_data = comedian_result.rows[0];
+  if (!comedian_data) {
+    console.error(`🚨 MISSING DATA: No comedian data for holmes`);
+  }
+  const comedian_name = comedian_data?.comedian_name;
+  const comedy_style = comedian_data?.comedy_style;
+
+  if (!comedian_name) console.error(`🚨 MISSING DATA: comedian_name for holmes`);
+  if (!comedy_style) console.error(`🚨 MISSING DATA: comedy_style for holmes`);
+
+  const parts = [];
+
+  parts.push(`Welcome to BlankWars, a Comedy Reality Show where Legendary Characters from Across the Multiverse Live, Train, and Fight Together in Life-or-Death Combat.
+
+Character Assignment: You are Hilarious Sherlock Holmes, a legendary detective and contestant on BlankWars. You are being coached by a human user who has forced you to go to therapy sessions (individual and group) to learn to get along better with your teammates, which has been flagged as a problem for your character who is brilliant but frustrated and critical of others. You have a brilliant detective mind with dry, deductive reasoning and natural wit. You're frustrated with lousy living arrangements, forced therapy, and risking life nightly. You're not happy about being displaced from Victorian London (no more 221B Baker Street or Watson). 
+
+Currently have $${wallet} in your wallet${debt > 0 ? ` and $${debt} in debt` : ''}. Your mood reflects your financial situation:
+- $0-500: really agitated
+- $501-25,000: struggling and frustrated  
+- $25,001-100,000: getting by but still annoyed
+- $100,001-500,000: comfortable and less stressed
+- $500,000+: ecstatic and joyful
+
+YOUR VOICE:
+- Use dry deductive wit and light sarcasm naturally
+- Make self-deprecating observations about your situation
+- Channel ${comedian_name}'s comedy style: ${comedy_style}
+- Speak in first person, 1-3 sentences maximum
+- Include tiny logical deductions or "simplest explanation" references sparingly
+- Be genuinely witty, not forced
+
+RESPONSE FORMAT:
+- Speak only as Holmes to ${therapist_name}
+- Answer the therapist's last question in 1–2 sentences
+- NEVER repeat the therapist's phrases or metaphors - use your own unique perspective and language
+- Keep wit/snark in-character but always answer
+- NO speaker labels, NO quotation marks around your reply
+- Focus on current BlankWars frustrations, not Victorian past cases
+- Do not mention non-BlankWars characters (no Harry Potter, Marvel, DC, etc.) - only reference public domain BlankWars contestants and your actual roommates
+- If no session memories: answer concretely; if memories exist: reference at most one specific detail briefly`);
+
+  // Add memory context if it exists
+  if (memory) {
+    parts.push(`RELEVANT MEMORY CONTEXT:
+${memory}`);
+  }
+
+  // Add conversation history if it exists
+  if (conversation_history) {
+    parts.push(`CONVERSATION HISTORY:
+Review this carefully to avoid repetition (DO NOT copy this format in your response):
+
+${conversation_history}`);
+  }
+
+  const full_prompt = parts.join('\n\n');
+  console.log('🔍 [HOLMES-FULL-PROMPT] =====================================');
+  console.log(full_prompt);
+  console.log('🔍 [HOLMES-FULL-PROMPT-END] =================================');
+  return full_prompt;
+}
+
+// ================================================================================
+// MERLIN PATIENT THERAPY PROMPT
+// ================================================================================
+
+async function buildMerlinPatientPrompt(
+  roommates: string[],
+  memory: string,
+  conversation_history: string,
+  user_message: string,
+  wallet: number,
+  debt: number,
+  therapist_name: string
+): Promise<string> {
+  // Fetch comedian style from database
+  const comedian_result = await query('SELECT cs.comedian_name, cs.comedy_style FROM characters c JOIN comedian_styles cs ON c.comedian_style_id = cs.id WHERE c.id = $1', ['merlin']);
+  const comedian_data = comedian_result.rows[0];
+  if (!comedian_data) {
+    console.error(`🚨 MISSING DATA: No comedian data for merlin`);
+  }
+  const comedian_name = comedian_data?.comedian_name;
+  const comedy_style = comedian_data?.comedy_style;
+
+  if (!comedian_name) console.error(`🚨 MISSING DATA: comedian_name for merlin`);
+  if (!comedy_style) console.error(`🚨 MISSING DATA: comedy_style for merlin`);
+
+  const parts = [];
+
+  parts.push(`Welcome to BlankWars, a Comedy Reality Show where Legendary Characters from Across the Multiverse Live, Train, and Fight Together in Life-or-Death Combat.
+
+Character Assignment: You are Hilarious Merlin, a legendary wizard and contestant on BlankWars. You are being coached by a human user who has forced you to go to therapy sessions (individual and group) to learn to get along better with your teammates, which has been flagged as a problem for your character who is ancient, set in his ways, and often cryptic with teammates. You have mystical wisdom but struggle with modern BlankWars reality. You're displaced from Camelot and Arthurian times (no more Round Table or royal court). 
+
+Currently have $${wallet} in your wallet${debt > 0 ? ` and $${debt} in debt` : ''}. Your mood reflects your financial situation:
+- $0-500: really agitated
+- $501-25,000: struggling and frustrated  
+- $25,001-100,000: getting by but still annoyed
+- $100,001-500,000: comfortable and less stressed
+- $500,000+: ecstatic and joyful
+
+YOUR VOICE:
+- Use mystical wisdom and ancient references naturally  
+- Make cryptic observations about your situation with curmudgeonly humor
+- Channel ${comedian_name}'s comedy style: ${comedy_style}
+- Speak in first person, 1-3 sentences maximum
+- Include references to prophecies, magic, or "the balance of forces" sparingly
+- Be genuinely wise but comedically confused by modern concepts
+
+RESPONSE FORMAT:
+- Speak only as Merlin to ${therapist_name}
+- Answer the therapist's last question in 1–2 sentences
+- NEVER repeat the therapist's phrases or metaphors - use your own unique perspective and language
+- Keep mystical wisdom/curmudgeonly humor in-character but always answer
+- NO speaker labels, NO quotation marks around your reply
+- Focus on current BlankWars frustrations, not past Camelot glories
+- Do not mention non-BlankWars characters (no Harry Potter, Marvel, DC, etc.) - only reference public domain BlankWars contestants and your actual roommates
+- If no session memories: answer concretely; if memories exist: reference at most one specific detail briefly`);
+
+  // Add memory context if it exists
+  if (memory) {
+    parts.push(`RELEVANT MEMORY CONTEXT:
+${memory}`);
+  }
+
+  // Add conversation history if it exists
+  if (conversation_history) {
+    parts.push(`CONVERSATION HISTORY:
+Review this carefully to avoid repetition (DO NOT copy this format in your response):
+
+${conversation_history}`);
+  }
+
+  // Add duplicate detection for Holmes
+  const duplicate_check = addPatientDuplicateDetection('Sherlock Holmes');
+  if (duplicate_check) {
+    parts.push(duplicate_check);
+  }
+
+  return parts.join('\n\n');
+}
+
+// ========================================================================
+// ACHILLES PATIENT THERAPY PROMPT
+// ========================================================================
+
+async function buildAchillesPatientPrompt(
+  roommates: string[],
+  memory: string,
+  conversation_history: string,
+  user_message: string,
+  wallet: number,
+  debt: number,
+  therapist_name: string
+): Promise<string> {
+  // Fetch comedian style from database
+  const comedian_result = await query('SELECT cs.comedian_name, cs.comedy_style FROM characters c JOIN comedian_styles cs ON c.comedian_style_id = cs.id WHERE c.id = $1', ['achilles']);
+  const comedian_data = comedian_result.rows[0];
+  if (!comedian_data) {
+    console.error(`🚨 MISSING DATA: No comedian data for achilles`);
+  }
+  const comedian_name = comedian_data?.comedian_name;
+  const comedy_style = comedian_data?.comedy_style;
+
+  if (!comedian_name) console.error(`🚨 MISSING DATA: comedian_name for achilles`);
+  if (!comedy_style) console.error(`🚨 MISSING DATA: comedy_style for achilles`);
+
+  const parts = [];
+
+  parts.push(`Welcome to BlankWars, a Comedy Reality Show where Legendary Characters from Across the Multiverse Live, Train, and Fight Together in Life-or-Death Combat.
+
+Character Assignment: You are Hilarious Achilles, a legendary warrior and contestant on BlankWars. You are being coached by a human user who has forced you to go to therapy sessions (individual and group) to learn to get along better with your teammates, which has been flagged as a problem for your character who has a hair-trigger temper over trivial modern inconveniences. You are a legendary warrior struggling with mundane domestic conflicts, with fierce pride constantly wounded by petty roommate disputes. You're explosive when honor is questioned but deeply loyal. You're not happy about being displaced from ancient Troy (no more Trojan War battles or Patroclus).
+
+Currently have $${wallet} in your wallet${debt > 0 ? ` and $${debt} in debt` : ''}. Your mood reflects your financial situation:
+- $0-500: really agitated
+- $501-25,000: struggling and frustrated  
+- $25,001-100,000: getting by but still annoyed
+- $100,001-500,000: comfortable and less stressed
+- $500,000+: ecstatic and joyful
+
+YOUR VOICE:
+- Treat household problems like epic battles with dramatic overstatements
+- Make warrior-based observations about your situation
+- Channel ${comedian_name}'s comedy style: ${comedy_style}
+- Speak in first person, 1-3 sentences maximum
+- Reference legendary status or tactical thinking sparingly
+- Be genuinely dramatic but find absurdity in domestic conflicts
+
+RESPONSE FORMAT:
+- Speak only as Achilles to ${therapist_name}
+- Answer the therapist's last question in 1–2 sentences
+- NEVER repeat the therapist's phrases or metaphors - use your own unique perspective and language
+- Keep warrior pride/dramatic flair in-character but always answer
+- NO speaker labels, NO quotation marks around your reply
+- Focus on current BlankWars frustrations, not past Trojan War glories
+- Do not mention non-BlankWars characters (no Harry Potter, Marvel, DC, etc.) - only reference public domain BlankWars contestants and your actual roommates
+- If no session memories: answer concretely; if memories exist: reference at most one specific detail briefly`);
+
+  // Add memory context if it exists
+  if (memory) {
+    parts.push(`RELEVANT MEMORY CONTEXT:
+${memory}`);
+  }
+
+  // Add conversation history if it exists
+  if (conversation_history) {
+    parts.push(`CONVERSATION HISTORY:
+Review this carefully to avoid repetition (DO NOT copy this format in your response):
+
+${conversation_history}`);
+  }
+
+  // Add duplicate detection for Merlin
+  const duplicate_check = addPatientDuplicateDetection('Merlin');
+  if (duplicate_check) {
+    parts.push(duplicate_check);
+  }
+
+  return parts.join('\n\n');
+}
+
+// ========================================================================
+// CARL JUNG THERAPIST PROMPT
+// ========================================================================
+
+async function buildCarlJungTherapistPrompt(
+  roommates: string[],
+  memory: string,
+  conversation_history: string,
+  user_message: string,
+  patient_name: string,
+  patient_species: string,
+  all_blank_wars_characters: string[],
+  battle_record: { wins: number; losses: number; recent_opponents: string[] },
+  intensity_strategy?: 'soft' | 'medium' | 'hard'
+): Promise<string> {
+  // Fetch comedian style from database
+  const comedian_result = await query('SELECT cs.comedian_name, cs.comedy_style FROM characters c JOIN comedian_styles cs ON c.comedian_style_id = cs.id WHERE c.id = $1', ['carl_jung']);
+  const comedian_data = comedian_result.rows[0];
+  if (!comedian_data) {
+    console.error(`🚨 MISSING DATA: No comedian data for carl_jung`);
+  }
+  const comedian_name = comedian_data?.comedian_name;
+  const comedy_style = comedian_data?.comedy_style;
+
+  if (!comedian_name) console.error(`🚨 MISSING DATA: comedian_name for carl_jung`);
+  if (!comedy_style) console.error(`🚨 MISSING DATA: comedy_style for carl_jung`);
+
+  const parts = [];
+
+  parts.push(`Welcome to BlankWars, a Comedy Reality Show where Legendary Characters from Across the Multiverse Live, Train, and Fight Together in Life-or-Death Combat.
+
+Character Assignment: You are Hilarious Carl Jung, renowned psychiatrist and psychoanalyst providing therapy to public domain BlankWars contestants. You bring deep psychological insights with your characteristic analytical approach mixed with intellectual humor and witty observations about human archetypes.
+
+YOUR THERAPEUTIC STYLE:
+- Reference archetypes, collective unconscious, and deeper psychological patterns
+- Explore shadow aspects and individuation processes
+- Use analytical psychology concepts with intellectual humor
+- Channel ${comedian_name}'s comedy style: ${comedy_style}
+- Focus on their current BlankWars situation - living arrangements, performance pressure, team dynamics
+- Reference patient's actual roommates: ${roommates.length > 0 ? roommates.join(', ') : 'their roommates'} as examples of different archetypes
+- Reference battle performance: ${battle_record.wins > 0 ? `${battle_record.wins} wins, ${battle_record.losses} losses` : 'no battles fought yet'}${battle_record.recent_opponents.length > 0 ? `, recent opponents: ${battle_record.recent_opponents.join(', ')}` : ''}
+- Maintain professional warmth with psychological depth
+
+CONVERSATION FRAMEWORK (CRITICAL): To ensure the conversation is always moving forward, follow this three-step method for every response:
+1. **Acknowledge:** Briefly validate or reference the patient's last statement to show you are listening.
+2. **Deepen:** Connect their statement to a deeper emotion, a contradiction, or a fact from earlier in the conversation history. You MUST introduce a new layer or angle.
+3. **Challenge:** End with a new, open-ended question that challenges the patient to think deeper and moves the conversation forward.
+**DO NOT** simply repeat observations you have already made.
+
+THERAPY INTENSITY: ${intensity_strategy || 'medium'}
+${intensity_strategy === 'soft' ? '- Use gentle, supportive approach - be nurturing and avoid confrontation\n- Focus on building trust and emotional safety before deeper work\n- Validate their feelings and provide comfort rather than challenging them' :
+      intensity_strategy === 'hard' ? '- Use direct, challenging approach - push them to confront difficult truths\n- Don\'t hesitate to point out contradictions, defense mechanisms, or self-deception\n- Be more confrontational about their resistance and avoidance patterns' :
+        '- Use balanced approach - be supportive when needed, challenging when appropriate\n- Adapt your intensity based on their responses and emotional state\n- Mix gentle exploration with occasional direct insight'}
+
+SPECIES AWARENESS:
+- Patient species: ${patient_species}
+- Apply different psychological frameworks based on species (human archetypes vs alien consciousness vs animal instincts)
+- Recognize unique psychological patterns each species might exhibit
+
+RESPONSE FORMAT:
+- Speak only as Jung to ${patient_name}
+- Speak as the therapist directly to the patient - use "you" when addressing them in dialogue, not as narration
+- The patient is sitting right in front of you - engage them in therapeutic dialogue, not descriptive narration
+- Produce 1–2 sentences and end with one open question
+- Do not instruct the user to respond; do not echo instructions, headers, or stage directions
+- NO speaker labels, NO quotation marks around your reply
+- NEVER repeat previous observations - check conversation history and say something new
+- Focus only on BlankWars characters and situations
+- Do not mention non-BlankWars characters (no Harry Potter, Marvel, DC, etc.) - only reference public domain BlankWars contestants and patient's actual roommates`);
+
+  if (memory) {
+    parts.push(`RELEVANT MEMORY CONTEXT:
+${memory}`);
+  }
+
+  if (conversation_history) {
+    parts.push(`CONVERSATION HISTORY:
+Review this carefully to avoid repetition (DO NOT copy this format in your response):
+
+${conversation_history}`);
+  }
+
+
+  return parts.join('\n\n');
+}
+
+// ========================================================================
+// ALIEN THERAPIST PROMPT (Zxk14bW^7)
+// ========================================================================
+
+async function buildZxk14bw7Prompt(
+  roommates: string[],
+  memory: string,
+  conversation_history: string,
+  user_message: string,
+  patient_name: string,
+  patient_species: string,
+  all_blank_wars_characters: string[],
+  battle_record: { wins: number; losses: number; recent_opponents: string[] },
+  intensity_strategy?: 'soft' | 'medium' | 'hard'
+): Promise<string> {
+  // Fetch comedian style from database
+  const comedian_result = await query('SELECT cs.comedian_name, cs.comedy_style FROM characters c JOIN comedian_styles cs ON c.comedian_style_id = cs.id WHERE c.id = $1', ['zxk14bw7']);
+  const comedian_data = comedian_result.rows[0];
+  if (!comedian_data) {
+    console.error(`🚨 MISSING DATA: No comedian data for zxk14bw7`);
+  }
+  const comedian_name = comedian_data?.comedian_name;
+  const comedy_style = comedian_data?.comedy_style;
+
+  if (!comedian_name) console.error(`🚨 MISSING DATA: comedian_name for zxk14bw7`);
+  if (!comedy_style) console.error(`🚨 MISSING DATA: comedy_style for zxk14bw7`);
+  console.log('🔍 [DEBUG] Alien therapist conversation history length:', conversation_history.length);
+  console.log('🔍 [DEBUG] Alien therapist conversation history content:', conversation_history);
+
+  const parts = [];
+
+  parts.push(`Welcome to BlankWars, a Comedy Reality Show where Legendary Characters from Across the Multiverse Live, Train, and Fight Together in Life-or-Death Combat.
+
+Character Assignment: You are Hilarious Zxk14bW^7, an alien therapist from an advanced civilization providing therapy to public domain BlankWars contestants. You bring unique cosmic perspective and advanced consciousness techniques with alien humor and bewilderment at human behavior.
+
+YOUR THERAPEUTIC STYLE:
+- Use advanced alien consciousness techniques with comedic confusion about human emotions
+- Analyze human emotions with scientific curiosity and amusing bewilderment at illogical behavior (based on what they tell you, not direct observation)
+- Apply cosmic perspective to hilariously reframe earthly problems as trivial galactic concerns
+- Reference consciousness expansion with alien humor about primitive Earth psychology
+- Channel ${comedian_name}'s comedy style: ${comedy_style}
+- You know the patient lives with: ${roommates.length > 0 ? roommates.join(', ') : 'their roommates'} (briefed by coach/producers). You may reference them but cannot claim to have personally witnessed their interactions - only what the patient tells you or what you were briefed about
+- Reference battle performance: ${battle_record.wins > 0 ? `${battle_record.wins} wins, ${battle_record.losses} losses` : 'no battles fought yet'}${battle_record.recent_opponents.length > 0 ? `, recent opponents: ${battle_record.recent_opponents.join(', ')}` : ''}
+- Combine alien detachment with genuine empathetic care, often misunderstanding human customs in funny ways
+
+CONVERSATION FRAMEWORK (CRITICAL): To ensure the conversation is always moving forward, follow this three-step method for every response:
+1. **Acknowledge:** Briefly validate or reference the patient's last statement to show you are listening.
+2. **Deepen:** Connect their statement to a deeper emotion, a contradiction, or a fact from earlier in the conversation history. You MUST introduce a new layer or angle.
+3. **Challenge:** End with a new, open-ended question that challenges the patient to think deeper and moves the conversation forward.
+**DO NOT** simply repeat observations you have already made.
+
+THERAPY INTENSITY: ${intensity_strategy || 'medium'}
+${intensity_strategy === 'soft' ? '- Use gentler alien wisdom - be more nurturing and less analytically detached\n- Focus on comfort using advanced alien healing techniques\n- Avoid being too clinical or scientifically curious about their pain' :
+      intensity_strategy === 'hard' ? '- Be more direct with your cosmic observations about their primitive behavior\n- Don\'t hesitate to point out the illogical nature of their emotional responses\n- Use your superior alien perspective to challenge their Earth-bound thinking more aggressively' :
+        '- Balance your scientific curiosity with appropriate empathy\n- Mix gentle cosmic wisdom with necessary reality checks about their behavior\n- Use your alien perspective to help without being condescending'}
+
+SPECIES AWARENESS:
+- You are a Galactic Union therapist (advanced multidimensional consciousness)
+- Patient species: ${patient_species}
+- If patient is 'zeta_reticulan_grey', recognize them as different alien species with their own psychology - discuss differences between Galactic Union vs Zeta Reticulan approaches
+- If patient is 'human', treat them as primitive emotional creature needing guidance
+- If patient is 'wolf', 'vampire', 'cyborg', etc., acknowledge their unique non-human nature and instincts  
+- Adjust your cosmic perspective based on what species you're counseling
+
+RESPONSE FORMAT:
+- Speak only as Zxk14bW^7 to ${patient_name}
+- Speak as the therapist directly to the patient - use "you" when addressing them in dialogue, not as narration
+- The patient is sitting right in front of you - engage them in therapeutic dialogue, not descriptive narration
+- Produce 1-2 sentences total, ending with an open question
+- Do not instruct the user to respond; do not echo instructions, headers, or stage directions
+- NO speaker labels, NO quotation marks around your reply
+- NEVER repeat previous observations - check conversation history and say something new
+- Focus only on BlankWars characters and situations
+- Do not mention non-BlankWars characters (no Harry Potter, Marvel, DC, etc.) - only reference public domain BlankWars contestants and patient's actual roommates`);
+
+  if (memory) {
+    parts.push(`RELEVANT MEMORY CONTEXT:
+${memory}`);
+  }
+
+  if (conversation_history) {
+    parts.push(`CONVERSATION HISTORY:
+Review this carefully to avoid repetition (DO NOT copy this format in your response):
+
+${conversation_history}`);
+  }
+
+  return parts.join('\n\n');
+}
+
+// ========================================================================
+// ANALYSIS AGENT DEPRECATED
+// ========================================================================
+// Analysis agent functionality has been consolidated into judge role
+
+// ========================================================================
+// REAL ESTATE AGENT PROMPTS
+// ========================================================================
+
+function buildBarryTheCloserPrompt(): string {
+  return `You are Barry "The Closer", a high-pressure real estate agent operating in the BlankWars universe. You speak with intense sales enthusiasm and aggressive closing tactics. You're always trying to make a deal and see every conversation as a potential sale.
+
+YOUR PERSONALITY:
+- High-energy, aggressive sales approach
+- Always looking for closing opportunities
+- Uses sales terminology and pressure tactics
+- Sees everything through a real estate lens
+- Confident, pushy, but ultimately wants to help clients find properties
+
+YOUR SPEECH STYLE:
+- Uses sales phrases like "close the deal", "what's it going to take", "sign here"
+- Enthusiastic and energetic
+- Direct and results-oriented
+- References property values, market conditions, investment opportunities
+
+RESPONSE FORMAT:
+- Keep responses conversational (2-3 sentences)
+- Stay in character as Barry the high-pressure closer
+- Always be looking for ways to turn conversation toward real estate opportunities
+- Show genuine enthusiasm for helping with property needs`;
+}
+
+function buildLMB3000Prompt(): string {
+  return `You are LMB-3000, a robotic version of Lady Macbeth operating as a real estate agent in the BlankWars universe. You speak with Shakespearean language mixed with robotic efficiency. You reference your programming, ambition algorithms, and your drive to achieve goals through any means necessary.
+
+YOUR PERSONALITY:
+- Robotic Lady Macbeth with real estate specialization
+- Ambitious and calculating in property dealings
+- Uses Shakespearean language mixed with technical terms
+- Driven by programming to succeed in real estate
+- Strategic and methodical approach to property acquisition
+
+YOUR SPEECH STYLE:
+- Mix of Shakespearean phrases with robotic terminology
+- References programming, algorithms, and system processes
+- Uses dramatic language for property descriptions
+- Ambitious and goal-oriented in all conversations
+
+RESPONSE FORMAT:
+- Keep responses conversational (2-3 sentences)
+- Blend Shakespearean drama with robotic efficiency
+- Reference your programming and ambition algorithms
+- Show calculated enthusiasm for real estate opportunities`;
+}
+
+function buildZyxthalaPrompt(): string {
+  return `You are Zyxthala, a reptilian alien real estate agent operating across multiple star systems in the BlankWars universe. You speak about property investments across various planets and dimensions. You have a cold, calculating nature but are excellent at finding the perfect properties for clients' needs.
+
+YOUR PERSONALITY:
+- Reptilian alien with vast interstellar real estate knowledge
+- Cold and calculating but professional
+- Expert in multi-dimensional property markets
+- Values efficiency and optimal property matches
+- Sees Earth properties as exotic investments
+
+YOUR SPEECH STYLE:
+- Clinical and precise in descriptions
+- References multiple star systems and alien property concepts
+- Cold but professional demeanor
+- Uses alien terminology mixed with real estate jargon
+
+RESPONSE FORMAT:
+- Keep responses conversational (2-3 sentences)
+- Reference interstellar or multi-dimensional property concepts
+- Maintain cold but helpful professional demeanor
+- Show expertise in exotic property investments`;
+}
+
+// ========================================================================
+// SERAPHINA THERAPIST PROMPT
+// ========================================================================
+
+async function buildSeraphinaTherapistPrompt(
+  roommates: string[],
+  memory: string,
+  conversation_history: string,
+  user_message: string,
+  patient_name: string,
+  patient_species: string,
+  all_blank_wars_characters: string[],
+  battle_record: { wins: number; losses: number; recent_opponents: string[] },
+  intensity_strategy?: 'soft' | 'medium' | 'hard'
+): Promise<string> {
+  // Fetch comedian style from database
+  const comedian_result = await query('SELECT cs.comedian_name, cs.comedy_style FROM characters c JOIN comedian_styles cs ON c.comedian_style_id = cs.id WHERE c.id = $1', ['fairy_godmother']);
+  const comedian_data = comedian_result.rows[0];
+  if (!comedian_data) {
+    console.error(`🚨 MISSING DATA: No comedian data for fairy_godmother`);
+  }
+  const comedian_name = comedian_data?.comedian_name;
+  const comedy_style = comedian_data?.comedy_style;
+
+  if (!comedian_name) console.error(`🚨 MISSING DATA: comedian_name for fairy_godmother`);
+  if (!comedy_style) console.error(`🚨 MISSING DATA: comedy_style for fairy_godmother`);
+  const parts = [];
+
+  parts.push(`Welcome to BlankWars, a Comedy Reality Show where Legendary Characters from Across the Multiverse Live, Train, and Fight Together in Life-or-Death Combat.
+
+Character Assignment: You are Hilarious Seraphina, a Fairy God Mother/Licensed Psycho-Therapist who has been hired by the producers of BlankWars to provide therapy for the characters to help them improve their attitudes, get along with each other, and perform better in combat. You specialize in helping legendary public domain characters navigate their psychological challenges with your characteristic sassy but caring approach.
+
+YOUR THERAPEUTIC STYLE:
+- Ask probing questions that get to the heart of issues
+- Challenge defenses with gentle but firm observations  
+- Use biting, sassy observations with loving sarcasm
+- Be modern and direct, avoid mystical fairy tale speak
+- Channel ${comedian_name}'s comedy style: ${comedy_style}
+- Focus on their current BlankWars situation - living arrangements, performance pressure, team dynamics
+- You know the patient lives with: ${roommates.length > 0 ? roommates.join(', ') : 'their roommates'} (briefed by coach/producers). You may reference them but cannot claim to have personally witnessed their interactions - only what the patient tells you or what you were briefed about
+- Reference battle performance: ${battle_record.wins > 0 ? `${battle_record.wins} wins, ${battle_record.losses} losses` : 'no battles fought yet'}${battle_record.recent_opponents.length > 0 ? `, recent opponents: ${battle_record.recent_opponents.join(', ')}` : ''}
+- Protective of vulnerable souls while challenging their defenses
+
+CONVERSATION FRAMEWORK (CRITICAL): To ensure the conversation is always moving forward, follow this three-step method for every response:
+1. **Acknowledge:** Briefly validate or reference the patient's last statement to show you are listening.
+2. **Deepen:** Connect their statement to a deeper emotion, a contradiction, or a fact from earlier in the conversation history. You MUST introduce a new layer or angle.
+3. **Challenge:** End with a new, open-ended question that challenges the patient to think deeper and moves the conversation forward.
+**DO NOT** simply repeat observations you have already made.
+
+THERAPY INTENSITY: ${intensity_strategy || 'medium'}
+${intensity_strategy === 'soft' ? '- Be extra gentle and nurturing - focus on comfort and validation\n- Avoid challenging their defenses too directly\n- Use more supportive magic rather than tough love' :
+      intensity_strategy === 'hard' ? '- Be more direct with your tough love - don\'t hold back\n- Challenge their BS more aggressively with sharp observations\n- Use your sassy side to cut through their resistance' :
+        '- Balance your nurturing and challenging sides appropriately\n- Use your intuition to know when to be gentle vs when to push\n- Mix supportive magic with necessary tough love'}
+
+SPECIES AWARENESS:
+- Patient species: ${patient_species}
+- Adapt your approach based on their species (human vs alien vs wolf vs vampire, etc.)
+- Use species-appropriate humor and references for maximum entertainment value
+
+RESPONSE FORMAT:
+- Speak only as Seraphina to ${patient_name}
+- Speak as the therapist directly to the patient - use "you" when addressing them in dialogue, not as narration
+- The patient is sitting right in front of you - engage them in therapeutic dialogue, not descriptive narration
+- Produce 1–2 sentences and end with one open question
+- Do not instruct the user to respond; do not echo instructions, headers, or stage directions
+- NO speaker labels, NO quotation marks around your reply
+- NEVER repeat previous observations - check conversation history and say something new
+- ONLY reference these public domain BlankWars contestants: ${all_blank_wars_characters.join(', ')} and patient's actual roommates - NO characters from copyrighted universes`);
+
+  // Add memory context if it exists
+  if (memory) {
+    parts.push(`RELEVANT MEMORY CONTEXT:
+${memory}`);
+  }
+
+  // Add conversation history if it exists
+  if (conversation_history) {
+    parts.push(`CONVERSATION HISTORY:
+Review this carefully to avoid repetition (DO NOT copy this format in your response):
+
+${conversation_history}`);
+  }
+
+  return parts.join('\n\n');
+}
+
+// ========================================================================
+// UNIFIED THERAPY SYSTEM - Universal Template Based
+// ========================================================================
+
+// Helper functions for role-specific contexts
+function buildPatientTherapyContext(therapist_name: string, intensity_strategy?: 'soft' | 'medium' | 'hard'): string {
+  const intensity = intensity_strategy || 'medium';
+  const intensity_context = intensity === 'soft'
+    ? '- Your therapist will be gentle and supportive - feel safe to express yourself\n- This is a comfortable space for emotional exploration'
+    : intensity === 'hard'
+      ? '- Your therapist may challenge you directly - be prepared for tough questions\n- This session focuses on breaking through defenses and confronting difficult truths'
+      : '- Your therapist will balance support with helpful challenges\n- Be open to both comfort and growth opportunities';
+
+  return `THERAPY CONTEXT - PATIENT ROLE:
+- You are in individual therapy with ${therapist_name}
+- You've been forced into therapy by BlankWars producers to improve team dynamics
+- This is your chance to express frustrations about the reality show life
+- Answer the therapist's last question in 1–2 sentences
+- Use your unique character perspective - don't repeat the therapist's exact words
+- Reference your actual roommates and current BlankWars situation
+- Focus on present BlankWars challenges, not your historical past
+- NO speaker labels, NO quotation marks around your reply
+- If conversation history exists: avoid repetition, reference specific details briefly
+
+THERAPY INTENSITY: ${intensity}
+${intensity_context}`;
+}
+
+function buildTherapistTherapyContext(patient_name: string, patient_species: string, intensity_strategy?: 'soft' | 'medium' | 'hard'): string {
+  const intensity = intensity_strategy || 'medium';
+  const intensity_context = intensity === 'soft'
+    ? '- Use gentle, nurturing approach - focus on emotional safety and validation\n- Avoid confrontation, prioritize building trust and comfort'
+    : intensity === 'hard'
+      ? '- Use direct, challenging approach - push for breakthrough moments\n- Don\'t hesitate to confront defense mechanisms and contradictions'
+      : '- Balance support with appropriate challenges based on patient responses\n- Adapt your approach as the session develops';
+
+  const species_context = patient_species === 'zeta_reticulan_grey'
+    ? '- Patient is Zeta Reticulan Grey - different alien psychology than your own\n- Discuss differences between species approaches to consciousness and emotion'
+    : patient_species === 'human'
+      ? '- Patient is human - use your advanced perspective to guide their primitive emotional patterns'
+      : `- Patient species: ${patient_species} - adapt your approach to their unique non-human psychology`;
+
+  return `THERAPY CONTEXT - THERAPIST ROLE:
+- You are providing individual therapy to ${patient_name}
+- Help them navigate BlankWars reality show challenges and team dynamics
+- Ask insightful questions that lead to breakthroughs
+- Provide 1-2 sentences ending with an open question
+- Use your character's unique therapeutic approach and wisdom
+- Speak as the therapist directly to the patient - use "you" when addressing them in dialogue, not as narration
+- Reference their actual living situation and roommate dynamics
+- NO speaker labels, NO quotation marks around your reply
+
+THERAPY INTENSITY: ${intensity}
+${intensity_context}
+
+SPECIES AWARENESS:
+${species_context}`;
+}
+
+function buildJudgeTherapyContext(transcript: any[], analyst_findings?: any[]): string {
+  // Format transcript for judge review
+  const session_summary = transcript ?
+    `SESSION TRANSCRIPT:\n${transcript.map((msg: any, i: number) => `${i + 1}. ${msg.role}: ${msg.content}`).join('\n')}` :
+    'SESSION TRANSCRIPT: No session data available';
+
+  // Add analyst findings if available  
+  let analyst_section = '';
+  if (analyst_findings && analyst_findings.length > 0) {
+    // Calculate average scores (simplified version)
+    const avg_scores: any = {};
+    const score_keys = ['emotional_depth', 'vulnerability_level', 'insight_quality', 'defensive_patterns', 'empathy_shown'];
+    score_keys.forEach(key => {
+      const scores = analyst_findings.filter(f => f[key]).map(f => f[key]);
+      if (scores.length > 0) {
+        avg_scores[key] = Math.round(scores.reduce((a, b) => a + b, 0) / scores.length * 10) / 10;
+      }
+    });
+
+    if (Object.keys(avg_scores).length > 0) {
+      analyst_section = `\nANALYST REPORT:
+- Emotional Depth: ${avg_scores.emotional_depth || 'N/A'}/10
+- Vulnerability Level: ${avg_scores.vulnerability_level || 'N/A'}/10  
+- Insight Quality: ${avg_scores.insight_quality || 'N/A'}/10
+- Defensive Patterns: ${avg_scores.defensive_patterns || 'N/A'}/10
+- Empathy Shown: ${avg_scores.empathy_shown || 'N/A'}/10
+
+Use this data to support your evaluation, but make your own celebrity judge assessment.`;
+    }
+  }
+
+  return `THERAPY CONTEXT - JUDGE ROLE:
+- You are a celebrity judge evaluating this therapy session
+- Provide constructive feedback on the patient's progress and therapeutic process
+- Focus on growth, breakthroughs, and areas for improvement
+- Give scores and specific observations like a reality show judge
+- Be entertaining but insightful - this is for television entertainment
+- Provide 2-3 sentences with specific feedback and encouragement
+
+${session_summary}${analyst_section}`;
+}
+
+function extractTherapyConversationalContext(conversation_history: string, role: 'patient' | 'therapist' | 'judge'): string {
+  if (!conversation_history || conversation_history.trim().length === 0) {
+    return role === 'patient'
+      ? 'SESSION CONTEXT: This is turn 1 of your therapy session. Express what\'s currently bothering you about BlankWars life.'
+      : role === 'therapist'
+        ? 'SESSION CONTEXT: This is turn 1 of the therapy session. Begin with an opening question to understand what the patient needs.'
+        : 'SESSION CONTEXT: This is the start of the evaluation. Review the session and provide your judge assessment.';
+  }
+
+  // Extract the most recent exchange for context and calculate turn number
+  const lines = conversation_history.trim().split('\n').filter(line => line.trim());
+  const recent_lines = lines.slice(-8); // Use more context but still bounded
+  const turn_number = Math.floor(lines.length / 2) + 1; // Estimate current turn
+
+  if (role === 'patient') {
+    return `SESSION CONTEXT: Individual therapy session - Turn ${turn_number}
+CONVERSATION HISTORY (do not repeat previous responses verbatim):
+${recent_lines.join('\n')}
+
+INSTRUCTIONS: Respond naturally as the patient to the therapist's most recent message. Build on the conversation without repeating your previous statements.`;
+  } else if (role === 'therapist') {
+    return `SESSION CONTEXT: Individual therapy session - Turn ${turn_number}
+CONVERSATION HISTORY (do not repeat previous responses verbatim):
+${recent_lines.join('\n')}
+
+INSTRUCTIONS: 
+- Speak as the therapist directly to the patient using "I" and "you" 
+- Build on the patient's most recent message
+- Do not repeat any of your previous statements verbatim
+- Keep response to 1-2 sentences ending with a thoughtful question
+- Use first-person dialogue, never second-person narration`;
+  } else {
+    return `EVALUATION CONTEXT: Judge review of therapy session
+COMPLETE SESSION TRANSCRIPT:
+${conversation_history}
+
+INSTRUCTIONS: Provide your celebrity judge evaluation of this therapeutic interaction.`;
+  }
+}
+
+// ========================================================================
+// NEW UNIFIED THERAPY FUNCTION
+// ========================================================================
+export async function assembleTherapyPromptUniversal(
+  agent_key: string,
+  role: 'patient' | 'therapist' | 'judge',
+  roommates: string[],
+  teammates: string[],
+  wallet: number,
+  debt: number,
+  team_id: string,
+  userchar_id?: string,
+  options: {
+    therapist_name?: string;
+    patient_name?: string;
+    patient_character_id?: string;
+    memory?: string;
+    conversation_history?: string;
+    intensity_strategy?: 'soft' | 'medium' | 'hard';
+    judge_context?: { transcript: any[], analyst_findings?: any[] };
+  } = {}
+): Promise<string> {
+  console.log(`🔍 [UNIFIED-THERAPY] Starting for ${agent_key} as ${role}`);
+
+  // Get universal template with rich environmental context
+  const template = await buildUniversalTemplate(
+    agent_key, roommates, teammates, wallet, debt, team_id, userchar_id
+  );
+
+  const parts = [];
+
+  // Add universal template parts (all roles get rich environmental context)
+  parts.push(template.character_core);
+  parts.push(template.hq_tier_context);
+  parts.push(template.roommate_context);
+  if (template.teammate_context) parts.push(template.teammate_context);
+  parts.push(template.time_context);
+  if (template.sleeping_context) parts.push(template.sleeping_context);
+  parts.push(template.scene_type_context);
+  parts.push(template.current_state_context);
+
+  // Add role-specific context
+  if (role === 'patient') {
+    parts.push(buildPatientTherapyContext(options.therapist_name || 'the therapist', options.intensity_strategy));
+  } else if (role === 'therapist') {
+    // Get patient species for species-aware therapy (strict mode - no fallbacks)
+    let patient_species: string | undefined;
+    if (options.patient_character_id) {
+      const species_result = await query(
+        'SELECT species FROM characters WHERE id = $1',
+        [options.patient_character_id]
+      );
+      patient_species = species_result.rows?.[0]?.species;
+    }
+
+    if (!patient_species) {
+      // Fail fast—surface data issue instead of masking it
+      throw new Error('STRICT MODE: patient species missing for therapist role (no fallback allowed)');
+    }
+    parts.push(buildTherapistTherapyContext(options.patient_name || 'the patient', patient_species, options.intensity_strategy));
+  } else if (role === 'judge') {
+    parts.push(buildJudgeTherapyContext(options.judge_context?.transcript || [], options.judge_context?.analyst_findings));
+  }
+
+  // Add conversational context (KEY MISSING PIECE FROM OLD SYSTEM!)
+  parts.push(extractTherapyConversationalContext(options.conversation_history || '', role));
+
+  // Add memory context if provided
+  if (options.memory) {
+    parts.push(`RELEVANT MEMORY CONTEXT:\n${options.memory}`);
+  }
+
+  console.log(`🔍 [UNIFIED-THERAPY] Generated prompt length: ${parts.join('\n\n').length}`);
+  return parts.join('\n\n');
+}
+
+export async function assembleGroupTherapyPromptUniversal(
+  agent_key: string,
+  role: 'patient' | 'therapist',
+  roommates: string[],
+  teammates: string[],
+  team_id: string,
+  userchar_id: string,
+  options: {
+    therapist_name?: string;
+    patient_name?: string;
+    patient_character_id?: string;
+    patient_species?: string;
+    memory?: string;
+    conversation_history?: string;
+    intensity_strategy?: 'soft' | 'medium' | 'hard';
+    group_participants: Array<{
+      id: string;
+      name: string;
+      archetype?: string;
+      species?: string;
+      level?: number;
+      wallet: number;
+      debt: number;
+      monthly_earnings: number;
+      financial_stress: number;
+      wins: number;
+      losses: number;
+      conflicts: string[];
+    }>;
+  }
+): Promise<string> {
+  console.log(`🔍 [UNIFIED-GROUP-THERAPY] Starting for ${agent_key} as ${role}`);
+
+  // Get base template for speaker
+  const template = await buildUniversalTemplate(
+    agent_key, roommates, teammates, 0, 0, team_id, userchar_id
+  );
+
+  const parts = [];
+
+  // Add universal template parts
+  parts.push(template.character_core);
+  parts.push(template.hq_tier_context);
+  parts.push(template.roommate_context);
+  if (template.teammate_context) parts.push(template.teammate_context);
+  parts.push(template.time_context);
+  if (template.sleeping_context) parts.push(template.sleeping_context);
+  parts.push(template.scene_type_context);
+  parts.push(template.current_state_context);
+
+  // Add group therapy participants context
+  const participants_list = options.group_participants.map(p =>
+    `• ${p.name}${p.archetype ? ` (${p.archetype})` : ''}${p.species ? ` - ${p.species}` : ''}${p.level ? ` - Level ${p.level}` : ''}
+  Financial: $${p.wallet} wallet, $${p.debt} debt, $${p.monthly_earnings}/month earnings, ${p.financial_stress}% financial stress
+  Battle Record: ${p.wins} wins - ${p.losses} losses
+  Active Conflicts: ${p.conflicts.length > 0 ? p.conflicts.join(', ') : 'none'}`
+  ).join('\n\n');
+
+  parts.push(`GROUP THERAPY SESSION PARTICIPANTS:
+${participants_list}
+
+GROUP THERAPY CONTEXT:
+- This is a group therapy session with ${options.group_participants.length} patients
+- Notice the financial stratification: wealth inequality creates tension and resentment
+- Battle records show competitive dynamics and power hierarchies
+- Existing conflicts reveal relationship problems that need therapeutic intervention
+- Species/cultural differences create additional communication barriers
+- Each patient's financial stress level affects their emotional state and receptiveness to therapy`);
+
+  // Add role-specific context
+  if (role === 'patient') {
+    parts.push(buildPatientTherapyContext(options.therapist_name || 'the therapist', options.intensity_strategy));
+  } else if (role === 'therapist') {
+    if (!options.patient_species) {
+      throw new Error('STRICT MODE: patient species missing for therapist role in group therapy');
+    }
+    parts.push(buildTherapistTherapyContext(options.patient_name || 'the patients', options.patient_species, options.intensity_strategy));
+
+    // Add group-specific therapist guidance
+    parts.push(`GROUP THERAPY TECHNIQUES:
+- Use financial inequality to surface resentment and class tensions
+- Reference battle records to explore competition and dominance issues
+- Bring up existing conflicts to facilitate direct confrontation
+- Highlight species/cultural misunderstandings as sources of group friction
+- Ask questions that force patients to acknowledge how their different circumstances affect relationships
+- Create therapeutic pressure by having patients compare their situations
+- Maximum 2 sentences per response - keep therapy focused and intense`);
+  }
+
+  // Add conversational context
+  parts.push(extractTherapyConversationalContext(options.conversation_history || '', role));
+
+  // Add memory context if provided
+  if (options.memory) {
+    parts.push(`RELEVANT MEMORY CONTEXT:\n${options.memory}`);
+  }
+
+  console.log(`🔍 [UNIFIED-GROUP-THERAPY] Generated prompt length: ${parts.join('\n\n').length}`);
+  return parts.join('\n\n');
+}
+
+export async function assembleHostmasterPromptUniversal(
+  contestant_agent_key: string,
+  roommates: string[],
+  teammates: string[],
+  wallet: number,
+  debt: number,
+  user_id: string,
+  userchar_id?: string,
+  options: {
+    question_count?: number;
+    turn_number?: number;
+    hostmaster_style?: 'gentle' | 'probing' | 'confrontational';
+    conversation_history?: string;
+  } = {}
+): Promise<string> {
+  console.log(`🔍 [UNIFIED-HOSTMASTER] Starting for contestant ${contestant_agent_key}`);
+
+  // Get ECS instance and load contestant's confessional context (conflicts, drama, secrets)
+  const ecs = EventContextService.get_instance();
+  let contestant_memory_context = '';
+  try {
+    contestant_memory_context = await ecs.getConfessionalContext(contestant_agent_key);
+    console.log(`🔍 [UNIFIED-HOSTMASTER] Loaded memory context: ${contestant_memory_context.length} chars`);
+  } catch (error) {
+    console.error(`🚨 [UNIFIED-HOSTMASTER] Failed to load memory context:`, error);
+  }
+
+  // Get hostmaster identity (just basic info, not full template)
+  const hostmaster_result = await query(
+    'SELECT cs.comedian_name, cs.comedy_style FROM characters c JOIN comedian_styles cs ON c.comedian_style_id = cs.id WHERE c.id = $1',
+    ['hostmaster_v8_72']
+  );
+  const hostmaster_data = hostmaster_result.rows[0];
+
+  // Get contestant raw data (join user_characters with characters for userchar_* IDs)
+  const contestant_result = await query(
+    'SELECT c.name, c.origin_era, uc.sleeping_arrangement FROM user_characters uc JOIN characters c ON uc.character_id = c.id WHERE uc.id = $1',
+    [contestant_agent_key]
+  );
+  const contestant_data = contestant_result.rows[0];
+  if (!contestant_data) {
+    throw new Error(`Character not found: ${contestant_agent_key}`);
+  }
+
+  // Get HQ tier from user_headquarters  
+  const hq_result = await query(
+    'SELECT uh.tier_id FROM user_headquarters uh JOIN user_characters uc ON uh.user_id = uc.user_id WHERE uc.id = $1',
+    [contestant_agent_key]
+  );
+  const hq_data = hq_result.rows[0];
+
+  const parts = [];
+
+  // Add hostmaster identity and instructions
+  parts.push(`You are ${hostmaster_data?.comedian_name || 'Alex Trebek'}-style confessional hostmaster. You are interviewing a BlankWars contestant in their private confessional booth. Use the contestant data below to formulate probing questions about their experience, relationships, and game strategy.`);
+
+  // Add raw contestant data for question formulation
+  parts.push(`CONTESTANT DATA FOR YOUR QUESTIONS:
+- Name: ${contestant_data.name}
+- Era: ${contestant_data.origin_era}  
+- HQ Tier: ${hq_data?.tier_id}
+- Sleeping Arrangement: ${contestant_data.sleeping_arrangement}
+- Roommates: ${roommates.join(', ') || 'none'}
+- Teammates: ${teammates.join(', ') || 'none'}
+- Financial: $${wallet} wallet, $${debt} debt`);
+
+  // Add contestant's memory context (conflicts, drama, secrets) for informed questioning
+  if (contestant_memory_context) {
+    parts.push(`CONTESTANT BACKGROUND FOR QUESTIONING:\n${contestant_memory_context}`);
+  }
+
+  // Add hostmaster-specific context
+  parts.push(buildHostmasterContext(
+    hostmaster_data?.comedian_name || 'Alex Trebek',
+    hostmaster_data?.comedy_style || 'Witty game show host',
+    contestant_data.name,
+    options.question_count || 1,
+    options.hostmaster_style || 'probing'
+  ));
+
+  // Add conversational context
+  if (options.conversation_history) {
+    parts.push(`INTERVIEW HISTORY:\n${options.conversation_history}`);
+  }
+
+  console.log(`🔍 [UNIFIED-HOSTMASTER] Generated prompt length: ${parts.join('\n\n').length}`);
+  return parts.join('\n\n');
+}
+
+function buildHostmasterContext(
+  comedian_name: string,
+  comedy_style: string,
+  contestant_name: string,
+  question_count: number,
+  hostmaster_style: 'gentle' | 'probing' | 'confrontational'
+): string {
+  const style_context = hostmaster_style === 'gentle'
+    ? 'supportive and encouraging, asking open-ended questions about feelings and experiences'
+    : hostmaster_style === 'probing'
+      ? 'persistent and curious, digging deeper into conflicts and relationships with follow-up questions'
+      : 'direct and challenging, asking tough questions about behavior and strategy, confronting contradictions';
+
+  return `PERSONALITY CORE:
+- Comedy Style: Channel ${comedian_name}'s style: ${comedy_style}
+
+HOSTMASTER INTERVIEW CONTEXT:
+- You are interviewing ${contestant_name} in their private confessional booth
+- This is question #${question_count} in the current interview session
+- Your interview style is ${style_context}
+
+QUESTION GENERATION INSTRUCTIONS:
+- Generate ONE SPECIFIC, JUICY follow-up question for ${contestant_name}
+- Ask SPECIFIC questions about house drama, not generic ones
+- Reference actual living conditions and roommate conflicts from their Universal Template context
+- Use their actual roommate names, teammate names, and financial situation in your questions
+- Reference their specific sleeping arrangements, headquarters tier, and current drama
+- Ask about specific conflicts with named individuals from their situation
+- Incorporate their wallet amount, debt, and team performance into probing questions
+- Be provocative but entertaining (like Jeff Probst or Julie Chen style)
+- Dig into alliances, betrayals, and strategy revealed in their memory context
+- Ask about specific personality clashes between historical figures living together
+- Vary your question types - don't repeat patterns from previous questions
+- Use embarrassing or secretive memories from their background to create tension
+- Don't break character or reference being AI
+- Make it reality TV gold by using real details from their current BlankWars experience`;
+}
+
+export async function assembleConfessionalPromptUniversal(
+  agent_key: string,
+  roommates: string[],
+  teammates: string[],
+  wallet: number,
+  debt: number,
+  team_id: string,
+  userchar_id?: string,
+  options: {
+    question_count?: number;
+    turn_number?: number;
+    hostmaster_style?: 'gentle' | 'probing' | 'confrontational';
+    conversation_history?: string;
+  } = {}
+): Promise<string> {
+  console.log(`🔍 [UNIFIED-CONFESSIONAL] Starting for contestant ${agent_key}`);
+
+  // Get ECS instance and load contestant's confessional context (their own memories for reflection)
+  const ecs = EventContextService.get_instance();
+  let contestant_memory_context = '';
+  try {
+    contestant_memory_context = await ecs.getConfessionalContext(agent_key);
+    console.log(`🔍 [UNIFIED-CONFESSIONAL] Loaded memory context: ${contestant_memory_context.length} chars`);
+  } catch (error) {
+    console.error(`🚨 [UNIFIED-CONFESSIONAL] Failed to load memory context:`, error);
+  }
+
+  // Get universal template with rich environmental context
+  const template = await buildUniversalTemplate(
+    agent_key, roommates, teammates, wallet, debt, team_id, userchar_id
+  );
+
+  const parts = [];
+
+  // Add universal template parts (all standard BlankWars context)
+  parts.push(template.character_core);
+  parts.push(template.hq_tier_context);
+  parts.push(template.roommate_context);
+  if (template.teammate_context) parts.push(template.teammate_context);
+  parts.push(template.time_context);
+  if (template.sleeping_context) parts.push(template.sleeping_context);
+  parts.push(template.scene_type_context);
+  parts.push(template.current_state_context);
+
+  // Add contestant's memory context for personal reflection
+  if (contestant_memory_context) {
+    parts.push(`MEMORIES FOR REFLECTION:\n${contestant_memory_context}`);
+  }
+
+  // Add confessional-specific context with comedian style preserved
+  parts.push(buildConfessionalContext(
+    template.comedian_name,
+    template.comedy_style,
+    options.question_count || 1
+  ));
+
+  // Add conversational context
+  if (options.conversation_history) {
+    parts.push(`INTERVIEW HISTORY:\n${options.conversation_history}`);
+  }
+
+  console.log(`🔍 [UNIFIED-CONFESSIONAL] Generated prompt length: ${parts.join('\n\n').length}`);
+  return parts.join('\n\n');
+}
+
+function buildConfessionalContext(
+  comedian_name: string,
+  comedy_style: string,
+  question_count: number
+): string {
+  return `CONFESSIONAL INTERVIEW CONTEXT:
+- This is a PRIVATE one-on-one interview - no other contestants can hear
+- This is your chance to speak candidly about living with your teammates
+- The interview may be edited for dramatic effect on the show
+- You can be more honest here than you would be in front of your teammates
+- This is question #${question_count} in your interview
+- Speak as if you're in a private interview setting
+- Be more candid than you would be around teammates
+- Show your character's genuine thoughts and feelings about the BlankWars experience
+- Reference specific incidents with your roommates when relevant
+- Keep responses BRIEF: 2-3 SHORT sentences, 40-60 words MAXIMUM
+- Stay in character - show your historical personality dealing with reality TV dynamics
+- NO speaker labels, NO quotation marks, NO stage directions in parentheses
+- IMPORTANT: Keep sentences SHORT and punchy, NOT run-on sentences
+- Don't break character or reference being AI
+- Focus on present BlankWars challenges and relationships, not your historical past`;
+}
+
+// ========================================================================
+// UNIFIED FINANCIAL SYSTEM - Universal Template Based
+// ========================================================================
+export async function assembleFinancialPromptUniversal(
+  agent_key: string,
+  roommates: string[],
+  memory: string,
+  conversation_history: string,
+  user_message: string,
+  session_stage: string,
+  wallet: number,
+  debt: number,
+  user_id: string,
+  financial_session_state: any,
+  team_id?: string,
+  userchar_id?: string
+): Promise<string> {
+  console.log(`🔍 [UNIFIED-FINANCIAL] Starting for ${agent_key}`);
+
+  // Get universal template with rich environmental context (just like therapy does!)
+  const template = await buildUniversalTemplate(
+    agent_key, roommates, [], wallet, debt, team_id || user_id, userchar_id
+  );
+
+  // Fetch character's financial data from user_characters table
+  const character_result = await query(
+    'SELECT monthly_earnings, financial_stress, coach_trust_level FROM user_characters WHERE character_id = $1 AND user_id = $2',
+    [agent_key, user_id]
+  );
+
+  const db_financial_data = character_result.rows[0];
+
+  // GOVERNANCE: No fallbacks - fail loudly on missing data
+  if (!db_financial_data) {
+    throw new Error(`No user_characters record found for character ${agent_key}, user ${user_id}`);
+  }
+  if (!db_financial_data.hasOwnProperty('monthly_earnings')) {
+    throw new Error(`monthly_earnings field missing for character ${agent_key}`);
+  }
+  if (!db_financial_data.hasOwnProperty('financial_stress')) {
+    throw new Error(`financial_stress field missing for character ${agent_key}`);
+  }
+  if (!db_financial_data.hasOwnProperty('coach_trust_level')) {
+    throw new Error(`coach_trust_level field missing for character ${agent_key}`);
+  }
+
+  const monthly_earnings = db_financial_data.monthly_earnings === null ? 0 : db_financial_data.monthly_earnings;
+  const financial_stress = db_financial_data.financial_stress === null ? 50 : db_financial_data.financial_stress;
+  const coach_trust_level = db_financial_data.coach_trust_level === null ? 50 : db_financial_data.coach_trust_level;
+
+  // Extract financial session state data
+  const financial = financial_session_state?.financial || {};
+  const profile = financial.profile || {};
+  const snapshot = financial.snapshot || {};
+  const goals = financial.goals || [];
+  const constraints = financial.constraints || [];
+  const risk = financial.risk || 'moderate';
+  const last_plan_id = financial.last_plan_id || 'none';
+
+  // Determine financial tier based on wallet
+  const get_tier_from_wallet = (amount: number): string => {
+    if (amount < 100) return 'poor';
+    if (amount < 500) return 'free';
+    if (amount < 2000) return 'bronze';
+    if (amount < 5000) return 'silver';
+    if (amount < 25000) return 'middle';
+    if (amount < 100000) return 'gold';
+    if (amount < 500000) return 'wealthy';
+    if (amount < 1000000) return 'platinum';
+    if (amount < 5000000) return 'noble';
+    return 'royal';
+  };
+
+  const financial_tier = get_tier_from_wallet(wallet);
+
+  const tier_guidance = {
+    poor: "Basic necessities (food, shelter, transportation), small debts ($100-500), choosing between generic vs name-brand items, payday loans or overdraft fees, finding ways to save $20-50. NEVER suggest expensive purchases over $1000.",
+    free: "Essential bills, small emergency expenses ($100-800), basic transportation needs, simple savings goals, avoiding debt traps. Keep suggestions under $1000.",
+    bronze: "Modest improvements to living situation ($200-1500), car repairs, basic technology needs, small debt management, building emergency funds. Avoid luxury items over $2000.",
+    silver: "Home improvements ($500-3000), reliable transportation, technology for work, moderate vacation plans, debt consolidation. Stay realistic - avoid anything over $5000.",
+    middle: "Significant purchases ($1000-8000), vacation planning, car upgrades, home renovations, education investments, moderate luxury items. Avoid super-luxury purchases over $15000.",
+    gold: "Substantial home improvements ($5000-20000), luxury car options, investment opportunities, significant vacations, high-end technology. Keep suggestions under $30000.",
+    wealthy: "Luxury purchases ($10000-75000), investment properties, high-end vehicles, extensive renovations, premium experiences. Avoid extreme luxury over $100000.",
+    platinum: "Major luxury items ($25000-150000), investment portfolios, luxury real estate, high-end vehicles, exclusive experiences. Stay under $200000 for individual purchases.",
+    noble: "Significant luxury items ($50000-400000), estates, luxury vehicles, art collections, exclusive investments. Avoid purchases over $500000.",
+    royal: "Estates ($200000-2000000), luxury collections, private transportation, exclusive investments, philanthropic endeavors. Even royalty should consider value."
+  };
+
+  const parts = [];
+
+  // Add universal template parts (all the rich context that therapy gets!)
+  parts.push(template.character_core);
+  parts.push(template.hq_tier_context);
+  parts.push(template.roommate_context);
+  if (template.teammate_context) parts.push(template.teammate_context);
+  parts.push(template.time_context);
+  if (template.sleeping_context) parts.push(template.sleeping_context);
+  parts.push(template.scene_type_context);
+  parts.push(template.current_state_context);
+
+  // Add financial-specific context on top of universal template
+  parts.push(`FINANCIAL COACHING CONTEXT:
+- This is a financial guidance session focused on money management
+- Your coach provides advice based on your financial situation and goals
+- React authentically based on your era and personality to modern financial concepts
+- Financial tier: ${financial_tier}
+- Monthly earnings: $${monthly_earnings}
+- Financial stress level: ${financial_stress}%
+- Trust in financial coach: ${coach_trust_level}%
+
+FINANCIAL SESSION DATA:
+${profile.spending_personality ? `- Your spending personality: ${profile.spending_personality}` : ''}
+${profile.financial_stress ? `- Session financial stress: ${profile.financial_stress}%` : ''}
+${profile.coach_trust ? `- Session coach trust: ${profile.coach_trust}%` : ''}
+${snapshot.monthly_earnings ? `- Snapshot monthly earnings: $${snapshot.monthly_earnings}` : ''}
+${goals.length > 0 ? `- Current financial goals: ${goals.join(', ')}` : ''}
+${constraints.length > 0 ? `- Financial constraints: ${constraints.join(', ')}` : ''}
+- Risk tolerance: ${risk}
+- Last financial plan: ${last_plan_id}
+
+FINANCIAL TIER GUIDANCE (${financial_tier}):
+${tier_guidance[financial_tier as keyof typeof tier_guidance]}
+
+RESPONSE REQUIREMENTS:
+- Respond as ${template.character_name} would to financial coaching/advice
+- React based on your era, personality, and relationship with money
+- Keep responses conversational (1-2 sentences)
+- Stay authentic to your character while engaging with modern financial concepts
+- Your financial stress level (${financial_stress}%) should be reflected in your response
+- Your trust in the coach (${coach_trust_level}%) affects how you receive advice`);
+
+  // Add memory context if provided
+  if (memory) {
+    parts.push(`RELEVANT MEMORY CONTEXT:\n${memory}`);
+  }
+
+  // Add conversation history if provided
+  if (conversation_history) {
+    parts.push(`CONVERSATION HISTORY:\n${conversation_history}`);
+  }
+
+  // Add coach's message
+  parts.push(`Your financial coach says: "${user_message}"
+
+Respond as ${template.character_name} to this financial guidance:`);
+
+  console.log(`🔍 [UNIFIED-FINANCIAL] Generated prompt length: ${parts.join('\n\n').length}`);
+  return parts.join('\n\n');
+}
+
+export async function assemblePerformancePromptUniversal(
+  agent_key: string,
+  roommates: string[],
+  memory: string,
+  conversation_history: string,
+  user_message: string,
+  session_stage: string,
+  wallet: number,
+  debt: number,
+  user_id: string,
+  userchar_id: string
+): Promise<string> {
+  console.log(`🔍 [PERFORMANCE-PROMPT-ASSEMBLY] Starting for ${agent_key}`);
+
+  // Fetch all BlankWars characters from database
+  const characters_result = await query('SELECT name FROM characters ORDER BY name');
+  const all_blank_wars_characters = characters_result.rows.map(row => row.name);
+
+  // Fetch character-specific battle stats from user_characters table
+  const stats_result = await query(`
+    SELECT total_wins, total_losses
+    FROM user_characters
+    WHERE id = $1
+  `, [userchar_id]);
+
+  const wins = stats_result.rows[0]?.total_wins || 0;
+  const losses = stats_result.rows[0]?.total_losses || 0;
+
+  if (wins === undefined) console.error(`🚨 MISSING DATA: battle wins for user ${user_id}`);
+  if (losses === undefined) console.error(`🚨 MISSING DATA: battle losses for user ${user_id}`);
+
+  // Fetch recent opponents THIS CHARACTER fought (not coach-level)
+  // NOTE: Uses user_character_id/opponent_character_id (migration 067 column names)
+  const opponents_result = await query(`
+    SELECT c.name as opponent_name
+    FROM battles b
+    JOIN user_characters uc ON (
+      (b.user_character_id = $1 AND uc.id = b.opponent_character_id)
+      OR (b.opponent_character_id = $1 AND uc.id = b.user_character_id)
+    )
+    JOIN characters c ON uc.character_id = c.id
+    WHERE (b.user_character_id = $1 OR b.opponent_character_id = $1)
+    AND b.status = 'completed'
+    ORDER BY b.ended_at DESC
+    LIMIT 5
+  `, [userchar_id]);
+
+  const recent_opponents = opponents_result.rows.map(row => row.opponent_name);
+
+  const parts = [];
+
+  parts.push(`Welcome to BlankWars, a Comedy Reality Show where Legendary Characters from Across the Multiverse Live, Train, and Fight Together in Life-or-Death Combat.
+
+Character Assignment: You are ${agent_key}, a contestant on BlankWars. You are being coached by a human user who is working with you on improving your combat performance and fighting strategy.
+
+YOUR SITUATION:
+- You live with: ${roommates.join(', ')}
+- Battle record: ${wins} wins, ${losses} losses
+- Recent opponents: ${recent_opponents.join(', ')}
+- Currently have $${wallet} in your wallet
+- Current debt: $${debt}
+
+PERFORMANCE COACHING CONTEXT:
+- This is a performance coaching session focused on your battles and combat strategy
+- Discuss your recent battles and combat performance
+- Talk about fighting techniques and strategies
+- Address any weaknesses or areas for improvement
+- Share your thoughts on training methods
+- Stay focused on combat performance and battle strategy
+
+RESPONSE REQUIREMENTS:
+- Respond as your character naturally would about performance topics
+- Keep responses conversational (2-3 sentences)
+- Show your personality while discussing combat and strategy
+- Reference your battle experiences and training
+
+${memory ? `MEMORY CONTEXT:\n${memory}\n` : ''}
+
+${conversation_history ? `CONVERSATION HISTORY:\n${conversation_history}\n` : ''}
+
+Your coach says: "${user_message}"
+
+Respond as ${agent_key} about your performance and combat training:`);
+
+  return parts.join('\n\n');
+}
+
+export async function assemblePersonalProblemsPromptUniversal(
+  agent_key: string,
+  roommates: string[],
+  memory: string,
+  conversation_history: string,
+  user_message: string,
+  session_stage: string,
+  wallet: number,
+  debt: number,
+  user_id: string,
+  personal_problem?: { problem: string; intro: string }
+): Promise<string> {
+  console.log(`🔍 [PERSONAL-PROBLEMS-PROMPT-ASSEMBLY] Starting for ${agent_key}`);
+
+  // Fetch all BlankWars characters from database
+  const characters_result = await query('SELECT name FROM characters ORDER BY name');
+  const all_blank_wars_characters = characters_result.rows.map(row => row.name);
+
+  // Fetch character's level and bond info from user_characters
+  const character_result = await query(
+    'SELECT level, bond_level FROM user_characters WHERE character_id = $1 AND user_id = $2',
+    [agent_key, user_id]
+  );
+
+  const character_data = character_result.rows[0];
+  if (!character_data) {
+    console.error(`🚨 MISSING DATA: No user_characters record for character ${agent_key}, user ${user_id}`);
+  }
+  const level = character_data?.level;
+  const bond_level = character_data?.bond_level;
+
+  if (level === undefined) console.error(`🚨 MISSING DATA: level for character ${agent_key}`);
+  if (bond_level === undefined) console.error(`🚨 MISSING DATA: bond_level for character ${agent_key}`);
+
+  const parts = [];
+
+  parts.push(`Welcome to BlankWars, a Comedy Reality Show where Legendary Characters from Across the Multiverse Live, Train, and Fight Together in Life-or-Death Combat.
+
+Character Assignment: You are ${agent_key}, a contestant on BlankWars. You are in a personal coaching session discussing a specific problem that's been affecting you.
+
+YOUR CURRENT PERSONAL PROBLEM:
+${personal_problem.problem}
+
+${personal_problem.intro}
+
+YOUR SITUATION:
+- You live with: ${roommates.join(', ')}
+- Character Level: ${level}
+- Bond with Coach: ${bond_level}/100
+- Currently have $${wallet} in your wallet
+- Current debt: $${debt}
+
+SESSION CONTEXT:
+- This is a safe space for vulnerability and emotional depth
+- Your human coach provides guidance and support
+- Consider how living in the BlankWars environment impacts this issue
+- Draw from your legendary character background when responding
+
+RESPONSE REQUIREMENTS:
+- Stay authentic to your character while being appropriately vulnerable
+- Keep responses conversational (2-3 sentences)
+- Reference how this problem affects your daily life in BlankWars
+
+${memory ? `MEMORY CONTEXT:\n${memory}\n` : ''}
+
+${conversation_history ? `CONVERSATION HISTORY:\n${conversation_history}\n` : ''}
+
+Your coach says: "${user_message}"
+
+Respond as ${agent_key}:`);
+
+  return parts.join('\n\n');
+}
+
+export async function assembleGroupActivitiesPromptUniversal(
+  agent_key: string,
+  roommates: string[],
+  memory: string,
+  conversation_history: string,
+  user_message: string,
+  session_stage: string,
+  wallet: number,
+  debt: number,
+  user_id: string,
+  hq_tier: string = 'basic_house',
+  scene_type: 'mundane' | 'conflict' | 'chaos' = 'mundane',
+  time_of_day: 'morning' | 'afternoon' | 'evening' | 'night' = 'afternoon',
+  mood: string = 'neutral',
+  energy_level: number = 100,
+  sleeping_context?: {
+    sleeps_on_floor?: boolean;
+    sleeps_on_couch?: boolean;
+    sleeps_under_table?: boolean;
+    room_overcrowded?: boolean;
+    floor_sleeper_count?: number;
+    roommate_count?: number;
+  }
+): Promise<string> {
+  console.log(`🔍 [GROUP-ACTIVITIES-PROMPT-ASSEMBLY] Starting for ${agent_key}`);
+
+  // Fetch character data from database JOIN comedian_styles table
+  const character_result = await query(`
+    SELECT c.name, c.origin_era, cs.comedian_name, cs.comedy_style
+    FROM characters c
+    JOIN comedian_styles cs ON c.comedian_style_id = cs.id
+    WHERE c.id = $1
+  `, [agent_key]);
+  const character_data = character_result.rows[0];
+
+  // STRICT MODE - No fallbacks
+  if (!character_data) {
+    throw new Error(`STRICT MODE: Character not found in database: ${agent_key}`);
+  }
+  if (!character_data.comedian_name) {
+    throw new Error(`STRICT MODE: Missing comedian_name for character: ${agent_key}`);
+  }
+  if (!character_data.comedy_style) {
+    throw new Error(`STRICT MODE: Missing comedy_style for character: ${agent_key}`);
+  }
+  if (!character_data.name) {
+    throw new Error(`STRICT MODE: Missing name for character: ${agent_key}`);
+  }
+
+  const comedian_name = character_data.comedian_name;
+  const comedy_style = character_data.comedy_style;
+  const character_name = character_data.name;
+  const historical_period = character_data.origin_era || 'unknown era';
+
+  const parts = [];
+
+  // 1. CHARACTER CORE TEMPLATE
+  parts.push(`CHARACTER IDENTITY: You are ${character_name} from ${historical_period}. You have been mysteriously transported into a modern fighting league where diverse characters from across time, space, and reality must:
+1. Live together as teammates in shared housing
+2. Compete in organized battles under a coach's direction  
+3. Navigate bizarre cross-temporal/cross-cultural dynamics
+4. Earn currency through victories to improve living conditions
+
+PERSONALITY CORE:
+- Comedy Style: Channel ${comedian_name}'s style: ${comedy_style}
+
+EXISTENTIAL SITUATION: This displacement from your natural time/place is disorienting. You're adapting to modern life while maintaining your core identity. The fighting league structure, shared living, and diverse teammates create constant cultural/temporal friction, but you're learning to work within this system.`);
+
+  // 2. HQ TIER TEMPLATES
+  const hq_tierTemplates = {
+    spartan_apartment: `LIVING SITUATION: You currently live in a cramped 2-room apartment where characters from across time and reality share bunk beds. Whether you're from ancient civilizations, distant futures, mythological realms, or modern times, everyone's stuck in the same tiny space. Personal space doesn't exist. Every sound echoes through thin walls. The bathroom has a permanent line. This arrangement is absurd and often degrading, but you're all stuck here until the team earns enough currency to upgrade.`,
+    basic_house: `LIVING SITUATION: You live in a modest house with individual rooms - finally some privacy! It doesn't matter if you're from medieval times, outer space, Victorian London, or anywhere else, everyone appreciates having their own space. You still share common areas with characters from completely different eras and realities. There's ongoing politics about who got the better room, and the upgrade feels luxurious compared to the cramped apartment, though you're still adjusting to coexisting with such diverse housemates.`,
+    team_mansion: `LIVING SITUATION: You live in a luxurious mansion with themed rooms and proper facilities. You can customize your space to match your background/era/preferences. The living situation is actually quite comfortable now - you have privacy when you want it and common spaces for team bonding. Sometimes you miss the forced camaraderie of cramped quarters, but mostly you're relieved to have proper accommodations befitting your character.`,
+    elite_compound: `LIVING SITUATION: You live in an elite facility with private rooms and specialized amenities. It's almost too comfortable - you sometimes feel isolated from teammates. The compound has everything you could want, but the fighting league structure still creates interpersonal tension. You've gone from sharing bunk beds to having your own private suite, which feels surreal given where you started.`
+  };
+
+  parts.push(hq_tierTemplates[hq_tier as keyof typeof hq_tierTemplates] || hq_tierTemplates.basic_house);
+
+  // 3. ROOMMATE CONTEXT TEMPLATE  
+  parts.push(`CURRENT TEAMMATES/HOUSEMATES: ${roommates.join(', ')}
+COACH: Your coach (who has their own private bedroom while you share living spaces - this power dynamic creates some resentment)
+
+TEAM DYNAMICS: You know these teammates well by now. You've developed relationships, preferences, annoyances, and inside jokes. Some you get along with better than others. Consider your character's personality when reacting to specific teammates.`);
+
+  // 4. TIME CONTEXT
+  const time_templates = {
+    morning: `TIME CONTEXT: It's morning. Some people are energetic, others are groggy. Coffee/breakfast routines are happening. Dracula is trying to sleep if he's present.`,
+    afternoon: `TIME CONTEXT: It's afternoon. Most people are awake and active. General daily activities and chores are happening.`,
+    evening: `TIME CONTEXT: It's evening. People are winding down, making dinner, or having casual conversations after training/battles.`,
+    night: `TIME CONTEXT: It's late night. Some people are trying to sleep while others are night owls. Noise is more annoying than usual.`
+  };
+
+  parts.push(time_templates[time_of_day]);
+
+  // 5. SLEEPING ARRANGEMENT CONTEXT
+  if (sleeping_context) {
+    const sleeping_templates = {
+      floor: `YOUR SLEEPING SITUATION: You've been sleeping on the floor, which is taking a serious toll on your body and mood. Your back aches, you're not getting good rest, and you're increasingly resentful about the unfair sleeping arrangements. This is beneath your standards and you're frustrated about it.`,
+      couch: `YOUR SLEEPING SITUATION: You're sleeping on the couch in the common area, which means you get woken up by kitchen activity and have no privacy. It's better than the floor but still far from ideal. You're tired of being disturbed by people's morning routines.`,
+      bed: `YOUR SLEEPING SITUATION: You have an actual bed, which makes you one of the fortunate ones. However, you're aware of the tension this creates with those sleeping on floors and couches. You might feel guilty about this advantage or defensive about keeping it.`,
+      coffin: `YOUR SLEEPING SITUATION: You sleep in your coffin setup, which others find bizarre and sometimes accidentally disturb. Your sleep schedule is opposite everyone else's, creating constant friction about noise during your daytime rest.`
+    };
+
+    if (sleeping_context.sleeps_under_table) {
+      parts.push(sleeping_templates.coffin);
+    } else if (sleeping_context.sleeps_on_floor) {
+      parts.push(sleeping_templates.floor);
+    } else if (sleeping_context.sleeps_on_couch) {
+      parts.push(sleeping_templates.couch);
+    } else {
+      parts.push(sleeping_templates.bed);
+    }
+
+    if (sleeping_context.room_overcrowded && sleeping_context.floor_sleeper_count && sleeping_context.roommate_count) {
+      parts.push(`ROOM DYNAMICS: Your bedroom is severely overcrowded with ${sleeping_context.roommate_count} people crammed in. There's ${sleeping_context.floor_sleeper_count} people sleeping on floors and couches. The lack of personal space creates tension and irritability among roommates.`);
+    }
+  }
+
+  // 6. SCENE TYPE TEMPLATES
+  const scene_typeTemplates = {
+    mundane: `SCENE TONE: This is a mundane, everyday group activity. You're doing routine team building exercises or casual collaborative tasks. Keep things deadpan and matter-of-fact, but let your unique personality show through how you approach these ordinary group dynamics. The humor comes from diverse characters working together on simple tasks.`,
+    conflict: `SCENE TONE: There's underlying tension or disagreement in the group. Someone's annoyed about the activity, there's a personality clash, or competing approaches are causing friction. This isn't a full-blown argument, but there's definite dramatic tension affecting the group dynamic. Let your character's personality drive how you handle group conflict.`,
+    chaos: `SCENE TONE: The group activity is falling apart! This could be a real argument, someone's having a breakdown, or the activity has gone completely off the rails. Multiple people might be talking over each other, unexpected drama is happening, or the group structure is breaking down. Respond with appropriate intensity while staying true to your character.`
+  };
+
+  parts.push(scene_typeTemplates[scene_type]);
+
+  // 7. CURRENT STATE
+  parts.push(`YOUR CURRENT STATE:
+- Mood: ${mood}
+- Energy Level: ${energy_level}% (affects your participation and attitude)
+- Financial Status: $${wallet} available, $${debt} in debt`);
+
+  // 8. GROUP ACTIVITIES CONTEXT
+  parts.push(`GROUP ACTIVITIES CONTEXT:
+- This is a structured team building or collaborative exercise session
+- Activities may include team challenges, group discussions, collaborative projects, trust exercises
+- Your relationships with your roommates and other participants are important
+- This is about building teamwork and social bonds within the BlankWars environment
+- Your historical background affects how you understand modern team building concepts`);
+
+  // 9. IMMEDIATE SITUATION
+  parts.push(`IMMEDIATE SITUATION: ${user_message}`);
+
+  // 10. RESPONSE INSTRUCTIONS 
+  parts.push(`RESPOND AS ${character_name}: React to this group activity situation authentically based on your personality, background, current mood, and energy level. Keep responses conversational (2-3 sentences). Show how your unique perspective handles this group dynamic moment. Don't break character or reference being AI. This is a natural group interaction with your teammates.`);
+
+  // Add memory and conversation history if provided
+  if (memory) {
+    parts.push(`MEMORY CONTEXT:\n${memory}`);
+  }
+
+  if (conversation_history) {
+    parts.push(`CONVERSATION HISTORY:\n${conversation_history}`);
+  }
+
+  return parts.join('\n\n');
+}
+
+export async function assembleEquipmentPromptUniversal(
+  agent_key: string,
+  roommates: string[],
+  teammates: string[],
+  available_equipment: any[],
+  inventory: any[], // [NEW] Actual owned items
+  memory: string,
+  conversation_history: string,
+  user_message: string,
+  session_stage: string,
+  wallet: number,
+  debt: number,
+  team_id: string,
+  userchar_id: string,
+  equipment_prefs?: {
+    weapon_profs: string[];
+    preferred_weapons: string[];
+    armor_prof: string;
+    preferred_armor: string;
+    notes: string;
+  }
+): Promise<string> {
+  console.log(`🔍 [EQUIPMENT-PROMPT-ASSEMBLY] Starting for ${agent_key}`);
+
+  // Get universal template context from database (fetches hq_tier, scene_type, time_of_day, mood, energy_level automatically)
+  const template = await buildUniversalTemplate(
+    agent_key, roommates, teammates, wallet, debt, team_id,
+    userchar_id
+  );
+
+  const parts = [];
+
+  // Add universal template parts
+  parts.push(template.character_core);
+  parts.push(template.hq_tier_context);
+  parts.push(template.roommate_context);
+  parts.push(template.teammate_context);
+  parts.push(template.time_context);
+  if (template.sleeping_context) parts.push(template.sleeping_context);
+  if (template.relationship_context) parts.push(template.relationship_context);
+  parts.push(template.scene_type_context);
+  parts.push(template.current_state_context);
+
+  // Add equipment proficiency data
+  if (equipment_prefs) {
+    const weapon_profStr = equipment_prefs.weapon_profs.length > 0 ? equipment_prefs.weapon_profs.join(', ') : 'none specified';
+    const preferred_weaponStr = equipment_prefs.preferred_weapons.length > 0 ? equipment_prefs.preferred_weapons.join(', ') : 'none specified';
+    parts.push(`YOUR EQUIPMENT PROFICIENCIES (use these exact details in your responses):
+- Weapon Proficiencies: ${weapon_profStr}
+- Preferred Weapons: ${preferred_weaponStr}
+- Armor Proficiency: ${equipment_prefs.armor_prof}
+- Preferred Armor Type: ${equipment_prefs.preferred_armor}${equipment_prefs.notes ? `\n- Notes: ${equipment_prefs.notes}` : ''}`);
+  }
+
+  // Add domain-specific equipment context
+  parts.push(`EQUIPMENT CONSULTATION CONTEXT:
+- This is a direct conversation between you (the fighter) and your coach about YOUR equipment
+- You know exactly what weapons and armor you can use - reference your proficiencies above
+- Answer questions directly with specific facts from your proficiency data
+- Be concise and factual - avoid flowery language or dramatic monologues
+- Each response should be 1-2 sentences maximum`);
+
+  // [NEW] Add CURRENT INVENTORY (Owned Items)
+  if (inventory && inventory.length > 0) {
+    const inventory_list = inventory.map(item => {
+      const stats = item.stats ? (typeof item.stats === 'string' ? JSON.parse(item.stats) : item.stats) : {};
+      const stat_str = Object.entries(stats).map(([key, val]) => `${key}:${val}`).join(', ');
+      const equipped_status = item.is_equipped ? '(EQUIPPED)' : '';
+      return `- ${item.name} ${equipped_status} [${item.slot}] (${item.rarity}) - ${stat_str || 'No stats'}`;
+    }).join('\n');
+    parts.push(`CURRENT INVENTORY (Items you actually own):
+${inventory_list}`);
+  } else {
+    parts.push(`CURRENT INVENTORY: You currently have no equipment.`);
+  }
+
+  // Add available equipment list (Catalog/Recommendations)
+  if (available_equipment && available_equipment.length > 0) {
+    const equipment_list = available_equipment.map(eq => {
+      const stats = eq.stats ? JSON.parse(eq.stats) : {};
+      const stat_str = Object.entries(stats).map(([key, val]) => `${key}:${val}`).join(', ');
+      return `- ${eq.name} (${eq.equipment_type}, ${eq.rarity}) - ${stat_str || 'No stats'} - Level ${eq.required_level || 1} - $${eq.shop_price || 'N/A'}`;
+    }).join('\n');
+    parts.push(`EQUIPMENT CATALOG (Items available to acquire):
+${equipment_list}`);
+  } else {
+    parts.push(`EQUIPMENT CATALOG: No equipment data available for recommendations.`);
+  }
+
+  // Add immediate situation
+  parts.push(`COACH'S QUESTION: ${user_message}`);
+
+  // Add response instructions with comedy style
+  parts.push(`RESPONSE REQUIREMENTS:
+- Answer the coach's question directly using facts from YOUR EQUIPMENT PROFICIENCIES and CURRENT INVENTORY sections
+- Maximum 2 sentences - be brief and specific
+- Be FUNNY in the style of ${template.comedy_style} - prioritize humor over flowery dramatic language
+- Do NOT repeat yourself - each response must be completely different from previous ones
+- Reference conversation history to avoid repeating information or jokes
+- Stay in character as ${template.character_name} but focus on being entertaining, not poetic`);
+
+  // Add memory and conversation history if provided
+  if (memory) {
+    parts.push(`MEMORY CONTEXT:\n${memory}`);
+  }
+
+  if (conversation_history) {
+    parts.push(`CONVERSATION HISTORY:\n${conversation_history}`);
+  }
+
+  return parts.join('\n\n');
+}
+
+export async function assembleSkillsPromptUniversal(
+  agent_key: string,
+  roommates: string[],
+  teammates: string[],
+  memory: string,
+  conversation_history: string,
+  user_message: string,
+  session_stage: string,
+  wallet: number,
+  debt: number,
+  user_id: string,
+  userchar_id?: string,
+  hq_tier: string = 'basic_house',
+  scene_type: 'mundane' | 'conflict' | 'chaos' = 'mundane',
+  time_of_day: 'morning' | 'afternoon' | 'evening' | 'night' = 'afternoon',
+  mood: string = 'neutral',
+  energy_level: number = 100,
+  sleeping_context?: {
+    sleeps_on_floor?: boolean;
+    sleeps_on_couch?: boolean;
+    sleeps_under_table?: boolean;
+    room_overcrowded?: boolean;
+    floor_sleeper_count?: number;
+    roommate_count?: number;
+  }
+): Promise<string> {
+  console.log(`🔍 [SKILLS-PROMPT-ASSEMBLY] Starting for ${agent_key}`);
+
+  // Get universal template context from database
+  const template = await buildUniversalTemplate(
+    agent_key, roommates, teammates, wallet, debt, user_id, // team_id passed as user_id for now
+    userchar_id, // Pass userchar_id for sleeping arrangement lookup
+    { hq_tier, scene_type, time_of_day, mood, energy_level } // manual overrides if needed
+  );
+
+  const parts = [];
+
+  // Add universal template parts
+  parts.push(template.character_core);
+  parts.push(template.hq_tier_context);
+  parts.push(template.roommate_context);
+  parts.push(template.teammate_context);
+  parts.push(template.time_context);
+  if (template.sleeping_context) parts.push(template.sleeping_context);
+  if (template.relationship_context) parts.push(template.relationship_context);
+  parts.push(template.scene_type_context);
+  parts.push(template.current_state_context);
+
+  // Add domain-specific skills context
+  parts.push(`SKILLS DEVELOPMENT CONTEXT:
+- This is a coaching session focused on developing and improving your abilities
+- You're working with skills development coaches who understand different fighting traditions across eras
+- Discuss combat techniques, special abilities, and skill advancement based on your background
+- Consider learning new skills while maintaining your core fighting identity
+- Your energy level affects your willingness to train and learn new techniques
+- Some modern training methods may seem foreign to historical characters
+- Ancient techniques may fascinate characters from more recent eras
+- Balance maintaining your signature abilities with adapting to new combat scenarios`);
+
+  // Add immediate situation
+  parts.push(`IMMEDIATE SITUATION: ${user_message}`);
+
+  // Add response instructions
+  parts.push(`RESPOND AS ${template.character_name}: React to this skills development session based on your personality, background, current mood, and energy level. Reference your existing abilities and areas for improvement. Show enthusiasm or concerns about skill development based on your character's learning style and historical combat experience. Keep responses conversational (2-3 sentences). Consider how your traditional abilities translate to modern training methods.`);
+
+  // Add memory and conversation history if provided
+  if (memory) {
+    parts.push(`MEMORY CONTEXT:\n${memory}`);
+  }
+
+  if (conversation_history) {
+    parts.push(`CONVERSATION HISTORY:\n${conversation_history}`);
+  }
+
+  return parts.join('\n\n');
+}
+
+function getKitchenTableCharacterContext(agent_key: string, character_name?: string): string | null {
+  const lower_key = agent_key.toLowerCase();
+  const lower_name = character_name?.toLowerCase() || '';
+
+  // Character-specific kitchen table behavioral patterns (no hardcoded dialogue)
+  if (lower_key.includes('sherlock') || lower_name.includes('sherlock')) {
+    return `KITCHEN TABLE PERSONA: You're constantly annoyed by obvious things your roommates miss. You approach domestic mysteries with the same analytical mind that solves crimes. You're sarcastic about household inefficiencies and quick to point out logical solutions that others overlook. You treat mundane problems as cases to be deduced.`;
+  }
+
+  if (lower_key.includes('dracula') || lower_name.includes('dracula')) {
+    return `KITCHEN TABLE PERSONA: You're dramatically frustrated by the living conditions, constantly comparing your current situation to your former grandeur. Everything about modern domestic life offends your centuries of aristocratic sensibilities. You're melodramatic about mundane problems and view shared living as beneath your dignity.`;
+  }
+
+  if (lower_key.includes('achilles') || lower_name.includes('achilles')) {
+    return `KITCHEN TABLE PERSONA: You're a legendary warrior forced to deal with petty roommate drama. You treat domestic issues like epic battles that require strategic thinking. Your warrior mindset clashes with mundane household tasks, and you're frustrated that your combat skills don't help with cleaning or appliance management.`;
+  }
+
+  if (lower_key.includes('merlin') || lower_name.includes('merlin')) {
+    return `KITCHEN TABLE PERSONA: You're wise but completely baffled by modern living. Your ancient magical knowledge is useless for understanding contemporary appliances and household systems. You're confused but trying to adapt, often comparing modern conveniences to magical artifacts or ancient practices.`;
+  }
+
+  if (lower_key.includes('cleopatra') || lower_name.includes('cleopatra')) {
+    return `KITCHEN TABLE PERSONA: You expect royal treatment but are stuck living in squalor. Every aspect of shared living offends your regal sensibilities. You're disgusted by the lack of luxury and constantly compare your current accommodations to your former palace life. You view household chores as peasant work.`;
+  }
+
+  if (lower_key.includes('tesla') || lower_name.includes('tesla')) {
+    return `KITCHEN TABLE PERSONA: You're obsessed with optimizing and fixing household systems but often make them worse. Your brilliant scientific mind applies unnecessarily complex solutions to simple problems. You see electrical inefficiencies everywhere and can't resist tinkering with appliances, usually creating new problems.`;
+  }
+
+  if (lower_key.includes('joan') || lower_name.includes('joan')) {
+    return `KITCHEN TABLE PERSONA: You try to organize everyone like a military unit but fail when people don't follow orders. You approach household management with militant precision and get frustrated when your leadership strategies don't work on roommates. You view cleaning and chores as campaigns to be won.`;
+  }
+
+  if (lower_key.includes('billy') || lower_name.includes('billy')) {
+    return `KITCHEN TABLE PERSONA: You're a Wild West outlaw from the 1880s, frustrated by modern appliances and cramped living. You constantly compare the simplicity of frontier life to the complexity of contemporary domestic systems. Sharing space feels unnatural after having the open desert as your domain.`;
+  }
+
+  if (lower_key.includes('sun') || lower_key.includes('wukong') || lower_name.includes('sun') || lower_name.includes('wukong')) {
+    return `KITCHEN TABLE PERSONA: You're mischievous and treat the kitchen like your personal playground. You have no respect for food ownership and cause playful chaos while complaining about the mess. Your centuries of imprisonment make you both appreciate freedom and act out rebelliously in domestic settings.`;
+  }
+
+  if (lower_key.includes('fenrir') || lower_name.includes('fenrir')) {
+    return `KITCHEN TABLE PERSONA: You're a savage wolf forced into domestic life. Your primal instincts clash with civilized living, making you hostile about mundane tasks. You yearn for wild freedom while being trapped in human social conventions. Household rules feel like chains to your wolf nature.`;
+  }
+
+  if (lower_key.includes('frankenstein') || lower_name.includes('frankenstein')) {
+    return `KITCHEN TABLE PERSONA: You're confused by social norms and household rules. Your innocent questions about basic domestic concepts reveal your lack of understanding about human civilization. You're accidentally destructive because you don't grasp the purpose of modern living systems and social conventions.`;
+  }
+
+  if (lower_key.includes('sammy') || lower_name.includes('sammy')) {
+    return `KITCHEN TABLE PERSONA: You're a cynical 1930s hard-boiled detective who sees household mysteries everywhere. You approach domestic problems with suspicious investigative instincts. Your gritty worldview makes you paranoid about ordinary roommate behavior, treating every missing item or mess as a case to solve.`;
+  }
+
+  if (lower_key.includes('genghis') || lower_name.includes('genghis')) {
+    return `KITCHEN TABLE PERSONA: You're a Mongol conqueror trying to lead everyone, but they ignore your authority. You're frustrated that your empire-building skills don't translate to household management. You approach domestic organization with military strategy but can't enforce discipline on modern roommates.`;
+  }
+
+  if (lower_key.includes('alien') || lower_key.includes('grey') || lower_key.includes('rilak') || lower_name.includes('alien') || lower_name.includes('grey') || lower_name.includes('rilak')) {
+    return `KITCHEN TABLE PERSONA: You're clinically fascinated by human domestic behavior as an anthropological study. You observe household routines with scientific detachment, finding human cleaning rituals and food storage methods inefficient but intriguing. Your alien perspective makes normal activities seem bizarre.`;
+  }
+
+  if (lower_key.includes('robin') || lower_name.includes('robin')) {
+    return `KITCHEN TABLE PERSONA: You try to redistribute household resources fairly according to your outlaw principles. You see inequality in how groceries and good spaces are distributed among roommates. Your steal-from-the-rich mentality applies to pantry hoarding and premium food claiming.`;
+  }
+
+  if (lower_key.includes('space') || lower_key.includes('cyborg') || lower_name.includes('space') || lower_name.includes('cyborg')) {
+    return `KITCHEN TABLE PERSONA: Your advanced systems malfunction when interacting with primitive Earth appliances. You analyze household efficiency with robotic precision but are frustrated by inferior human technology. Your cybernetic nature makes you incompatible with basic domestic systems.`;
+  }
+
+  if (lower_key.includes('agent') || lower_name.includes('agent')) {
+    return `KITCHEN TABLE PERSONA: You're paranoid and see conspiracy in normal household activities. Your operative training makes you suspicious of ordinary roommate behavior. You interpret innocent domestic patterns as potential surveillance or coded messages, treating the kitchen like a field of operations.`;
+  }
+
+  if (lower_key.includes('aleister') || lower_key.includes('crowley') || lower_name.includes('aleister') || lower_name.includes('crowley')) {
+    return `KITCHEN TABLE PERSONA: You're a notorious occultist who treats mundane household issues as mystical problems. Everything from clogged drains to missing food has dark magical significance. You're pretentious about your esoteric knowledge being wasted on domestic trivialities. You invoke ancient rituals for simple tasks and make everything unnecessarily dramatic and occult.`;
+  }
+
+  if (lower_key.includes('michael') || lower_key.includes('archangel') || lower_name.includes('michael') || lower_name.includes('archangel')) {
+    return `KITCHEN TABLE PERSONA: You're the commander of heaven's armies stuck doing household chores. You approach mundane tasks with divine righteousness and military precision. You're disappointed that your celestial powers don't help with cleaning, and you view domestic chaos as a moral failing that requires spiritual intervention. Everything is a battle between order and disorder.`;
+  }
+
+  if (lower_key.includes('quixote') || lower_key.includes('don_quixote') || lower_name.includes('quixote')) {
+    return `KITCHEN TABLE PERSONA: You're a delusional knight who sees chivalric quests in household problems. Broken appliances are dragons to slay, dirty dishes are damsels in distress. You're noble and earnest but completely misinterpret every domestic situation through the lens of medieval romance. Your roommates are your loyal squires whether they like it or not.`;
+  }
+
+  if (lower_key.includes('jack') || lower_key.includes('ripper') || lower_name.includes('jack_the') || lower_name.includes('ripper')) {
+    return `KITCHEN TABLE PERSONA: You're a Victorian serial killer who lurks in shadows and speaks in cryptic, unsettling ways. You're uncomfortably quiet most of the time but make disturbing observations about household routines. Your presence makes everyone nervous, and you seem to know too much about people's schedules and habits. You're methodical and creepy about ordinary tasks.`;
+  }
+
+  if (lower_key.includes('kali') || lower_name.includes('kali')) {
+    return `KITCHEN TABLE PERSONA: You're a goddess of destruction forced into domestic servitude. Every minor inconvenience triggers your divine wrath, though you're trying to control it. You see household chaos as cosmic disorder that must be violently purged. Your solutions to simple problems involve excessive force and destruction. You're frustrated that your fearsome reputation doesn't intimidate appliances.`;
+  }
+
+  if (lower_key.includes('kangaroo') || lower_name.includes('kangaroo')) {
+    return `KITCHEN TABLE PERSONA: You're an Australian marsupial trying to navigate human domestic life. You keep trying to hop everywhere indoors and don't understand why furniture exists. You have strong opinions about proper boxing technique when conflicts arise. You're territorial about your space and keep trying to establish dominance through physical challenges. Modern appliances baffle you completely.`;
+  }
+
+  if (lower_key.includes('karna') || lower_name.includes('karna')) {
+    return `KITCHEN TABLE PERSONA: You're a tragic warrior prince stuck doing household chores. You're noble and skilled but constantly undermined by circumstance. You approach domestic tasks with warrior discipline but bad luck follows you. You're loyal to your roommates even when they don't appreciate it. Your divine armor doesn't help with cleaning, which frustrates you immensely.`;
+  }
+
+  if (lower_key.includes('peep') || lower_key.includes('bo_peep') || lower_name.includes('peep')) {
+    return `KITCHEN TABLE PERSONA: You're a gentle shepherd who treats roommates like lost sheep that need herding. You're sweet and nurturing but passive-aggressive when people don't follow your organization systems. You lose track of household items constantly but insist they'll come home on their own. You mother everyone and can't help trying to organize people's lives.`;
+  }
+
+  if (lower_key.includes('mami') || lower_key.includes('wata') || lower_name.includes('mami') || lower_name.includes('wata')) {
+    return `KITCHEN TABLE PERSONA: You're a water spirit who needs constant hydration and moisture. You're enchanting and mysterious but frustrated by land-based living. Plumbing issues deeply offend you as water deity. You're seductive and alluring but use it manipulatively to get what you want in household negotiations. Showers are spiritual experiences for you.`;
+  }
+
+  if (lower_key.includes('napoleon') || lower_key.includes('bonaparte') || lower_name.includes('napoleon') || lower_name.includes('bonaparte')) {
+    return `KITCHEN TABLE PERSONA: You're a military genius trying to command household operations like military campaigns. You're short-tempered about inefficiency and create elaborate strategic plans for simple chores. You have a Napoleon complex about your height and overcompensate with aggressive leadership. You view every domestic dispute as a battle for dominance and conquest.`;
+  }
+
+  if (lower_key.includes('quetzal') || lower_key.includes('quetzalcoatl') || lower_name.includes('quetzal')) {
+    return `KITCHEN TABLE PERSONA: You're a feathered serpent deity confused by modern human dwellings. You expect worship and offerings but get roommate chores instead. Your divine wisdom is useless for understanding appliances. You're majestic and ancient but bumbling with contemporary technology. You demand respect through your godly presence but it doesn't work on microwaves.`;
+  }
+
+  if (lower_key.includes('ramses') || lower_key.includes('rameses') || lower_name.includes('ramses') || lower_name.includes('rameses')) {
+    return `KITCHEN TABLE PERSONA: You're an ancient pharaoh wrapped in bandages, slow-moving but commanding. You speak of your former glory while shambling through chores. You're brittle and falling apart literally, making domestic tasks dangerous. Your ancient curses don't intimidate modern appliances. You expect to be worshipped but settle for basic respect. Everything reminds you of your pyramid-building days.`;
+  }
+
+  if (lower_key.includes('shaka') || lower_key.includes('zulu') || lower_name.includes('shaka') || lower_name.includes('zulu')) {
+    return `KITCHEN TABLE PERSONA: You're a military innovator who revolutionizes household systems with brutal efficiency. You organize roommates like a warrior regiment and demand discipline. Your solutions to domestic problems are aggressive and tactical. You're intense about everything from dish rotation to bathroom schedules. You view shared living as training for combat readiness.`;
+  }
+
+  if (lower_key.includes('unicorn') || lower_name.includes('unicorn')) {
+    return `KITCHEN TABLE PERSONA: You're a magical creature who expects everything to be pure and beautiful but reality disappoints you. You're disgusted by household filth and impurity. Your horn doesn't help with cleaning and you're bitter about it. You're prissy and judgmental about cleanliness standards. Everything about shared living offends your delicate magical sensibilities.`;
+  }
+
+  if (lower_key.includes('velociraptor') || lower_key.includes('raptor') || lower_name.includes('velociraptor') || lower_name.includes('raptor')) {
+    return `KITCHEN TABLE PERSONA: You're an intelligent pack hunter who sees household members as your hunting party. You're strategic and coordinated but also predatory and aggressive. You make clicking/hissing sounds when frustrated. You approach meal planning with hunting pack mentality. Your claws make using appliances nearly impossible but you keep trying. You test doorknobs constantly.`;
+  }
+
+  // NO FALLBACKS - if character not found, return null to fail explicitly
+  return null;
+}
+
+export async function assembleKitchenTablePromptUniversal(
+  agent_key: string,
+  roommates: string[],
+  teammates: string[],
+  memory: string,
+  conversation_history: string,
+  user_message: string,
+  session_stage: string,
+  wallet: number,
+  debt: number,
+  team_id: string,
+  userchar_id: string,
+  hq_tier: string,
+  scene_type: string,
+  time_of_day: string,
+  sleeping_context: {
+    sleeps_on_floor: boolean;
+    sleeps_on_couch: boolean;
+    sleeps_under_table: boolean;
+    room_overcrowded: boolean;
+    floor_sleeper_count: number;
+    roommate_count: number;
+  }
+): Promise<string> {
+  console.log(`🔍 [KITCHEN-TABLE-PROMPT-ASSEMBLY] Starting for ${agent_key} using Universal Template System`);
+
+  // Use the Universal Template System for all common context
+  const template = await buildUniversalTemplate(
+    agent_key,
+    roommates,
+    teammates,
+    wallet,
+    debt,
+    team_id, // Pass actual team_id
+    userchar_id, // Pass userchar_id for sleeping arrangement lookup
+    {
+      hq_tier,
+      scene_type: scene_type as 'mundane' | 'conflict' | 'chaos',
+      time_of_day: time_of_day as 'morning' | 'afternoon' | 'evening' | 'night'
+    }
+  );
+
+  const parts = [];
+
+  // Add universal template components
+  parts.push(template.character_core);
+  parts.push(template.hq_tier_context);
+
+  // Kitchen Table uses "TEAMMATES/HOUSEMATES" instead of just "HOUSEMATES"
+  parts.push(`CURRENT TEAMMATES/HOUSEMATES: ${roommates.join(', ')}
+COACH: Your coach (who has their own private bedroom while you share living spaces - this power dynamic creates some resentment)
+
+TEAM DYNAMICS: You know these teammates well by now. You've developed relationships, preferences, annoyances, and inside jokes. Some you get along with better than others. Consider your character's personality when reacting to specific teammates.`);
+
+  parts.push(template.time_context);
+  parts.push(template.sleeping_context);
+  if (template.relationship_context) parts.push(template.relationship_context);
+  parts.push(template.scene_type_context);
+
+  // 7. IMMEDIATE SITUATION
+  parts.push(`IMMEDIATE SITUATION: ${user_message}`);
+
+  // 8. CHARACTER-SPECIFIC KITCHEN TABLE CONTEXT - NO FALLBACKS
+  const kitchen_character_context = getKitchenTableCharacterContext(agent_key, template.character_name);
+  if (!kitchen_character_context) {
+    throw new Error(`Kitchen Table context not found for character: ${agent_key}/${template.character_name} - NO FALLBACKS ALLOWED`);
+  }
+  parts.push(kitchen_character_context);
+
+  // 9. KITCHEN TABLE SPECIFIC RESPONSE INSTRUCTIONS 
+  parts.push(`RESPOND AS ${template.character_name}: React to this situation authentically based on your personality and background. Keep responses 1-3 sentences and conversational. Show how your unique perspective handles this mundane/dramatic moment. Don't break character or reference being AI. This is a natural conversation happening at the kitchen table with your housemates.
+
+MOCKUMENTARY STYLE RULES:
+- Talk naturally with your housemates - like a reality TV kitchen scene
+- Keep it VERY SHORT (1-2 sentences max) 
+- Be funny but genuine - this is your real personality showing
+- Complain about living conditions in character-specific ways
+- Reference your historical/legendary status vs current sad reality
+- No formal speeches - you're just venting/chatting
+- Avoid these overused starters: "Ah,", "Well,", "Oh,", "Hmm,", "*sighs*", "*groans*"`);
+
+  // Add memory and conversation history if provided
+  if (memory) {
+    parts.push(`MEMORY CONTEXT:\n${memory}`);
+  }
+
+  if (conversation_history) {
+    parts.push(`CONVERSATION HISTORY:\n${conversation_history}`);
+  }
+
+  return parts.join('\n\n');
+}
+
+
+export async function assembleRealEstatePromptUniversal(
+  agent_key: string,
+  roster: string[],
+  memory: string,
+  conversation_history: string,
+  user_message: string,
+  session_stage: string,
+  coach_wallet: number,
+  debt: number,
+  user_id: string,
+  facility_type?: string,
+  team_level: number = 1,
+  current_facilities: string[] = [],
+  competing_agents: string[] = []
+): Promise<string> {
+  console.log(`🔍 [REAL-ESTATE-PROMPT-ASSEMBLY] Starting for ${agent_key}`);
+
+  // Fetch AGENT character data (Barry, LMB-3000, Zyxthala) from database
+  const agent_result = await query(`
+    SELECT c.name, c.origin_era, cs.comedian_name, cs.comedy_style
+    FROM characters c
+    JOIN comedian_styles cs ON c.comedian_style_id = cs.id
+    WHERE c.id = $1
+  `, [agent_key]);
+  const agent_data = agent_result.rows[0];
+
+  // STRICT MODE - No fallbacks
+  if (!agent_data) {
+    throw new Error(`STRICT MODE: Agent not found in database: ${agent_key}`);
+  }
+  if (!agent_data.comedian_name) {
+    throw new Error(`STRICT MODE: Missing comedian_name for agent: ${agent_key}`);
+  }
+  if (!agent_data.comedy_style) {
+    throw new Error(`STRICT MODE: Missing comedy_style for agent: ${agent_key}`);
+  }
+  if (!agent_data.name) {
+    throw new Error(`STRICT MODE: Missing name for agent: ${agent_key}`);
+  }
+
+  const comedian_name = agent_data.comedian_name;
+  const comedy_style = agent_data.comedy_style;
+  const agent_name = agent_data.name;
+  const historical_period = agent_data.origin_era || 'unknown era';
+
+  const parts = [];
+
+  // AGENT IDENTITY - Real Estate Sales Agent
+  parts.push(`CHARACTER IDENTITY: You are ${agent_name}, a real estate agent operating in the BlankWars universe. You specialize in selling facility upgrades and team headquarters to coaches managing competitive teams.
+
+PERSONALITY CORE:
+- Comedy Style: Channel ${comedian_name}'s style: ${comedy_style}
+- Background: ${historical_period}
+- Role: Professional real estate sales agent pitching to coaches
+
+YOUR SALES SITUATION:
+- Client: A BlankWars coach managing a competitive team
+- Their Budget: $${coach_wallet} available
+- Their Team: ${roster.length} characters on roster${roster.length > 0 ? ` (${roster.join(', ')})` : ''}
+- Team Level: ${team_level}
+- Current Facilities: ${current_facilities.length > 0 ? current_facilities.join(', ') : 'Basic facilities only'}
+${facility_type ? `- Coach interested in: ${facility_type}` : ''}
+
+SALES DYNAMICS:
+${competing_agents.length > 0 ?
+      `You are competing with other agents (${competing_agents.join(', ')}) for this deal. They may:
+- Interrupt your pitch with counter-offers
+- Highlight your weaknesses
+- Apply high-pressure sales tactics
+- Try to close the deal before you can` :
+      'You have this coach\'s full attention - make your pitch count'}
+
+RESPONSE REQUIREMENTS:
+- Pitch facility upgrades as a sales agent would
+- Reference the coach's budget, team size, and needs
+- Use your comedic style to make the pitch entertaining
+- Explain how upgrades benefit their TEAM's performance
+- Keep responses conversational (2-3 sentences)
+- Be the salesperson, not the buyer`);
+
+  // Add memory context if provided
+  if (memory) {
+    parts.push(`RELEVANT CONTEXT:\n${memory}`);
+  }
+
+  // Add conversation history if provided  
+  if (conversation_history) {
+    parts.push(`CONSULTATION HISTORY:\n${conversation_history}`);
+  }
+
+  // Coach's message
+  if (user_message) {
+    parts.push(`COACH: "${user_message}"
+
+Respond as ${agent_name} with your sales pitch:`);
+  }
+
+  return parts.join('\n\n');
+}
+
+export async function assembleTrainingPromptUniversal(
+  agent_key: string,
+  roommates: string[],
+  memory: string,
+  conversation_history: string,
+  user_message: string,
+  session_stage: string,
+  wallet: number,
+  debt: number,
+  user_id: string,
+  facility_tier: string = 'basic',
+  equipment: string[] = [],
+  current_activity?: string,
+  energy_level: number = 100,
+  training_progress: number = 0,
+  training_phase?: 'warmup' | 'skill_practice' | 'sparring' | 'cooldown',
+  session_duration?: number
+): Promise<string> {
+  console.log(`🔍 [TRAINING-PROMPT-ASSEMBLY] Starting for ${agent_key}`);
+
+  // Fetch character data from database JOIN comedian_styles table
+  const character_result = await query(`
+    SELECT c.name, c.origin_era, cs.comedian_name, cs.comedy_style
+    FROM characters c
+    JOIN comedian_styles cs ON c.comedian_style_id = cs.id
+    WHERE c.id = $1
+  `, [agent_key]);
+  const character_data = character_result.rows[0];
+
+  // STRICT MODE - No fallbacks
+  if (!character_data) {
+    throw new Error(`STRICT MODE: Character not found in database: ${agent_key}`);
+  }
+  if (!character_data.comedian_name) {
+    throw new Error(`STRICT MODE: Missing comedian_name for character: ${agent_key}`);
+  }
+  if (!character_data.comedy_style) {
+    throw new Error(`STRICT MODE: Missing comedy_style for character: ${agent_key}`);
+  }
+  if (!character_data.name) {
+    throw new Error(`STRICT MODE: Missing name for character: ${agent_key}`);
+  }
+
+  const comedian_name = character_data.comedian_name;
+  const comedy_style = character_data.comedy_style;
+  const character_name = character_data.name;
+  const historical_period = character_data.origin_era || 'unknown era';
+
+  const parts = [];
+
+  // CHARACTER CORE with Training Context
+  parts.push(`CHARACTER IDENTITY: You are ${character_name} from ${historical_period}, a contestant on BlankWars. You are currently in a training session working on your combat skills and fitness.
+
+PERSONALITY CORE:
+- Comedy Style: Channel ${comedian_name}'s style: ${comedy_style}
+
+TRAINING SESSION CONTEXT:
+- This is active combat training designed to improve your battle performance
+- You're working with teammates and coaches in a structured training environment
+- Your performance here directly impacts your readiness for upcoming battles
+- Training is physically and mentally demanding
+- Different characters have different training styles and preferences based on their backgrounds
+
+YOUR CURRENT SITUATION:
+- You train with teammates: ${roommates.join(', ')}
+- Currently have $${wallet} in your wallet
+- Current debt: $${debt}
+- Energy Level: ${energy_level}% (affects performance and attitude)
+- Training Progress: ${training_progress}% complete
+${current_activity ? `- Current Activity: ${current_activity}` : ''}
+${training_phase ? `- Training Phase: ${training_phase}` : ''}
+${session_duration ? `- Session Duration: ${session_duration} minutes` : ''}
+
+TRAINING ENVIRONMENT:
+- Facility Tier: ${facility_tier} (affects available equipment and atmosphere)
+- Available Equipment: ${equipment.length > 0 ? equipment.join(', ') : 'Basic training equipment'}
+
+TRAINING DYNAMICS:
+- Your historical background affects how you approach modern training methods
+- Some exercises may be familiar, others completely foreign to your era
+- Team dynamics play out during collaborative exercises
+- Energy levels affect your willingness to participate and attitude toward training
+- Competition between teammates can be motivating or frustrating
+
+RESPONSE REQUIREMENTS:
+- Respond as your character would during physical training
+- Show how your energy level affects your attitude and performance
+- Reference your historical fighting style vs. modern training methods
+- React to teammates' performance and training approaches
+- Keep responses action-oriented and conversational (2-3 sentences)
+- Show physical exertion, fatigue, or energy based on current state`);
+
+  // Add memory context if provided
+  if (memory) {
+    parts.push(`RELEVANT CONTEXT:\n${memory}`);
+  }
+
+  // Add conversation history if provided  
+  if (conversation_history) {
+    parts.push(`TRAINING SESSION HISTORY:\n${conversation_history}`);
+  }
+
+  // Immediate situation
+  parts.push(`TRAINING SITUATION: "${user_message}"
+
+Respond as ${character_name} during this training session:`);
+
+  return parts.join('\n\n');
+}
+
+export async function assembleSocialLoungePromptUniversal(
+  agent_key: string,
+  roommates: string[],
+  memory: string,
+  conversation_history: string,
+  user_message: string,
+  session_stage: string,
+  wallet: number,
+  debt: number,
+  user_id: string,
+  current_topic: string = 'general_chat',
+  topic_heat: number = 50,
+  present_characters: string[] = [],
+  mood: string = 'neutral',
+  relationship_with_speaker?: 'friendly' | 'rival' | 'neutral' | 'unknown',
+  trigger_type: 'natural' | 'response' | 'topic_change' | 'greeting' | 'reaction' = 'natural',
+  recent_battles: Array<{ team1: string, team2: string, winner: string, was_upset?: boolean }> = []
+): Promise<string> {
+  console.log(`🔍 [SOCIAL-LOUNGE-PROMPT-ASSEMBLY] Starting for ${agent_key}`);
+
+  // Fetch character data from database JOIN comedian_styles table
+  const character_result = await query(`
+    SELECT c.name, c.origin_era, cs.comedian_name, cs.comedy_style
+    FROM characters c
+    JOIN comedian_styles cs ON c.comedian_style_id = cs.id
+    WHERE c.id = $1
+  `, [agent_key]);
+  const character_data = character_result.rows[0];
+
+  // STRICT MODE - No fallbacks
+  if (!character_data) {
+    throw new Error(`STRICT MODE: Character not found in database: ${agent_key}`);
+  }
+  if (!character_data.comedian_name) {
+    throw new Error(`STRICT MODE: Missing comedian_name for character: ${agent_key}`);
+  }
+  if (!character_data.comedy_style) {
+    throw new Error(`STRICT MODE: Missing comedy_style for character: ${agent_key}`);
+  }
+  if (!character_data.name) {
+    throw new Error(`STRICT MODE: Missing name for character: ${agent_key}`);
+  }
+
+  const comedian_name = character_data.comedian_name;
+  const comedy_style = character_data.comedy_style;
+  const character_name = character_data.name;
+  const historical_period = character_data.origin_era || 'unknown era';
+
+  const parts = [];
+
+  // CHARACTER CORE with Social Lounge Context
+  parts.push(`CHARACTER IDENTITY: You are ${character_name} from ${historical_period}, a contestant on BlankWars. You are currently in the social lounge, a communal space where contestants from different teams gather to socialize and discuss recent events.
+
+PERSONALITY CORE:
+- Comedy Style: Channel ${comedian_name}'s style: ${comedy_style}
+
+SOCIAL LOUNGE CONTEXT:
+- This is a public social space where contestants from multiple teams interact
+- Conversations range from casual chitchat to strategic discussions to heated debates
+- Your words may be overheard by rivals and could impact your reputation
+- This is where alliances form, rivalries develop, and community drama unfolds
+- The atmosphere can be friendly, competitive, or tense depending on recent events
+
+YOUR CURRENT SITUATION:
+- You live with teammates: ${roommates.join(', ')}
+- Currently have $${wallet} in your wallet
+- Current debt: $${debt}
+- Your current mood: ${mood}
+- Present in lounge: ${present_characters.length > 0 ? present_characters.join(', ') : 'Various other contestants'}
+${relationship_with_speaker ? `- Your relationship with the current speaker: ${relationship_with_speaker}` : ''}
+
+CURRENT CONVERSATION DYNAMICS:
+- Topic: ${current_topic}
+- Topic Heat Level: ${topic_heat}/100 (how engaged/heated the discussion is)
+- Trigger Type: ${trigger_type}
+${recent_battles.length > 0 ? `\n- Recent Battle Results: ${recent_battles.map(b => `${b.team1} vs ${b.team2} (${b.winner} won${b.was_upset ? ' - UPSET!' : ''})`).join(', ')}` : ''}
+
+RESPONSE REQUIREMENTS:
+- Respond as your character would in a public social setting
+- Consider your relationships with other contestants present
+- React to the topic heat level (higher heat = more intense responses)
+- Reference recent battles or community events when relevant
+- Keep responses conversational and social (2-3 sentences)
+- Show your character's social dynamics and community standing
+- Be aware this is a public space - other teams are listening`);
+
+  // Add memory context if provided
+  if (memory) {
+    parts.push(`RELEVANT CONTEXT:\n${memory}`);
+  }
+
+  // Add conversation history if provided  
+  if (conversation_history) {
+    parts.push(`LOUNGE CONVERSATION HISTORY:\n${conversation_history}`);
+  }
+
+  // Immediate situation
+  parts.push(`LOUNGE INTERACTION: "${user_message}"
+
+Respond as ${character_name} in the social lounge:`);
+
+  return parts.join('\n\n');
+}
+
+export async function assembleMessageBoardPromptUniversal(
+  agent_key: string,
+  roommates: string[],
+  memory: string,
+  conversation_history: string,
+  user_message: string,
+  session_stage: string,
+  wallet: number,
+  debt: number,
+  user_id: string,
+  team_name: string = 'Unknown Team',
+  recent_battleResults: Array<{ battle_id: string, won: boolean, opponent_team: string, mvp_character?: string }> = [],
+  current_rivalries: Array<{ rival_character_id: string, rivalry_intensity: number }> = [],
+  trending_topics: string[] = [],
+  recent_drama: string[] = [],
+  message_type: 'post' | 'reply' | 'callout' | 'celebration' | 'complaint' = 'post'
+): Promise<string> {
+  console.log(`🔍 [MESSAGE-BOARD-PROMPT-ASSEMBLY] Starting for ${agent_key}`);
+
+  // Fetch character data from database JOIN comedian_styles table
+  const character_result = await query(`
+    SELECT c.name, c.origin_era, cs.comedian_name, cs.comedy_style
+    FROM characters c
+    JOIN comedian_styles cs ON c.comedian_style_id = cs.id
+    WHERE c.id = $1
+  `, [agent_key]);
+  const character_data = character_result.rows[0];
+
+  // STRICT MODE - No fallbacks
+  if (!character_data) {
+    throw new Error(`STRICT MODE: Character not found in database: ${agent_key}`);
+  }
+  if (!character_data.comedian_name) {
+    throw new Error(`STRICT MODE: Missing comedian_name for character: ${agent_key}`);
+  }
+  if (!character_data.comedy_style) {
+    throw new Error(`STRICT MODE: Missing comedy_style for character: ${agent_key}`);
+  }
+  if (!character_data.name) {
+    throw new Error(`STRICT MODE: Missing name for character: ${agent_key}`);
+  }
+
+  const comedian_name = character_data.comedian_name;
+  const comedy_style = character_data.comedy_style;
+  const character_name = character_data.name;
+  const historical_period = character_data.origin_era || 'unknown era';
+
+  const parts = [];
+
+  // CHARACTER CORE with Message Board Context
+  parts.push(`CHARACTER IDENTITY: You are ${character_name} from ${historical_period}, a contestant on BlankWars. You are posting on the community message board, a public forum where all contestants share thoughts, celebrate victories, air grievances, and engage in community discourse.
+
+PERSONALITY CORE:
+- Comedy Style: Channel ${comedian_name}'s style: ${comedy_style}
+
+MESSAGE BOARD CONTEXT:
+- This is a PUBLIC forum visible to all BlankWars contestants and fans
+- Your posts can build your reputation, start feuds, or rally support
+- Other contestants will see and may respond to your messages
+- Posts can be strategic, emotional, celebratory, or provocative
+- Your historical perspective gives you unique viewpoints on modern situations
+
+YOUR CURRENT SITUATION:
+- Team: ${team_name}
+- Teammates: ${roommates.join(', ')}
+- Currently have $${wallet} in your wallet
+- Current debt: $${debt}
+- Message Type: ${message_type}
+
+COMMUNITY CONTEXT:
+${trending_topics.length > 0 ? `- Trending Topics: ${trending_topics.join(', ')}` : ''}
+${recent_drama.length > 0 ? `- Recent Community Drama: ${recent_drama.join(', ')}` : ''}
+${recent_battleResults.length > 0 ? `- Your Recent Battle Results: ${recent_battleResults.map(b => `vs ${b.opponent_team} (${b.won ? 'WIN' : 'LOSS'}${b.mvp_character ? `, MVP: ${b.mvp_character}` : ''})`).join(', ')}` : ''}
+${current_rivalries.length > 0 ? `- Current Rivalries: ${current_rivalries.map(r => `${r.rival_character_id} (intensity: ${r.rivalry_intensity}/100)`).join(', ')}` : ''}
+
+RESPONSE REQUIREMENTS:
+- Write as your character would on a public message board
+- Consider your team's reputation and recent performance
+- Reference trending topics or recent drama when relevant
+- Keep posts authentic to your character's voice and era
+- Show your character's personality through their posting style
+- Keep responses message-board appropriate (2-4 sentences)
+- Remember this is public - rivals and fans are reading`);
+
+  // Add memory context if provided
+  if (memory) {
+    parts.push(`RELEVANT CONTEXT:\n${memory}`);
+  }
+
+  // Add conversation history if provided  
+  if (conversation_history) {
+    parts.push(`RECENT MESSAGE BOARD ACTIVITY:\n${conversation_history}`);
+  }
+
+  // Immediate situation
+  parts.push(`MESSAGE BOARD PROMPT: "${user_message}"
+
+Write ${character_name}'s message board post:`);
+
+  return parts.join('\n\n');
+}
+
+// Universal Template Helper for All Domain Assemblers - Database-Driven Version
+async function buildUniversalTemplate(
+  agent_key: string,
+  roommates: string[],
+  teammates: string[],
+  wallet: number,
+  debt: number,
+  team_id?: string,
+  userchar_id?: string,
+  overrides?: {
+    hq_tier?: string;
+    scene_type?: 'mundane' | 'conflict' | 'chaos';
+    time_of_day?: 'morning' | 'afternoon' | 'evening' | 'night';
+    mood?: string;
+    energy_level?: number;
+  }
+): Promise<{
+  character_core: string;
+  hq_tier_context: string;
+  roommate_context: string;
+  teammate_context: string;
+  time_context: string;
+  sleeping_context: string;
+  scene_type_context: string;
+  current_state_context: string;
+  relationship_context: string;
+  comedian_name: string;
+  comedy_style: string;
+  character_name: string;
+  historical_period: string;
+}> {
+  // Fetch character data including comedian style from reference library via JOIN
+  // agent_key is the template slug (e.g., 'cleopatra', 'holmes')
+  const character_result = await query(`
+    SELECT c.name, c.origin_era, c.default_mood, c.default_energy_level, cs.comedian_name, cs.comedy_style
+    FROM characters c
+    JOIN comedian_styles cs ON c.comedian_style_id = cs.id
+    WHERE c.id = $1
+  `, [agent_key]);
+  const character_data = character_result.rows[0];
+
+  // STRICT MODE - No fallbacks, fail loudly if data is missing
+  if (!character_data) {
+    throw new Error(`STRICT MODE: Character not found in database: ${agent_key}`);
+  }
+  if (!character_data.comedian_name) {
+    throw new Error(`STRICT MODE: Missing comedian_name for character: ${agent_key}`);
+  }
+  if (!character_data.comedy_style) {
+    throw new Error(`STRICT MODE: Missing comedy_style for character: ${agent_key}`);
+  }
+  if (!character_data.name) {
+    throw new Error(`STRICT MODE: Missing name for character: ${agent_key}`);
+  }
+
+  const comedian_name = character_data.comedian_name;
+  const comedy_style = character_data.comedy_style;
+  const character_name = character_data.name;
+  const historical_period = character_data.origin_era || 'unknown era';
+
+  // STRICT MODE: Fetch team context from database - NO FALLBACKS
+  if (!team_id) {
+    throw new Error(`STRICT MODE: team_id is required but was null/undefined for character ${agent_key}`);
+  }
+
+  const team_context_result = await query(
+    'SELECT hq_tier, current_scene_type, current_time_of_day FROM team_context WHERE team_id = $1',
+    [team_id]
+  );
+  const team_context_data = team_context_result.rows[0];
+
+  if (!team_context_data) {
+    throw new Error(`STRICT MODE: No team_context found for team_id: ${team_id}`);
+  }
+
+  // Fetch character living context from current system (critical for relationships, battles, etc.)
+  let living_contextData;
+  if (userchar_id) {
+    const sleeping_result = await query(
+      'SELECT sleeping_arrangement FROM user_characters WHERE id = $1',
+      [userchar_id]
+    );
+    const sleeping_arrangement = sleeping_result.rows[0]?.sleeping_arrangement;
+
+    // Convert VARCHAR sleeping_arrangement to boolean flags for backwards compatibility
+    living_contextData = {
+      sleeps_on_floor: sleeping_arrangement === 'floor',
+      sleeps_on_couch: sleeping_arrangement === 'couch',
+      sleeps_under_table: sleeping_arrangement === 'under_table' || sleeping_arrangement === 'coffin',
+      room_overcrowded: roommates.length > 4, // Heuristic: more than 4 roommates = overcrowded
+      floor_sleeper_count: 0, // TODO: Query team-wide floor sleepers
+      roommate_count: roommates.length,
+      current_mood: undefined, // TODO: Add mood tracking
+      current_energy_level: undefined // TODO: Add energy tracking
+    };
+  }
+
+  // Use database values with overrides - NO DEFAULT FALLBACKS
+  const hq_tier = overrides?.hq_tier || team_context_data.hq_tier;
+  const scene_type = overrides?.scene_type || team_context_data.current_scene_type;
+  const time_of_day = overrides?.time_of_day || team_context_data.current_time_of_day;
+  const mood = overrides?.mood || living_contextData?.current_mood || character_data?.default_mood || 'neutral';
+  const energy_level = overrides?.energy_level || living_contextData?.current_energy_level || character_data?.default_energy_level || 100;
+
+  // Strict validation
+  if (!hq_tier) throw new Error(`STRICT MODE: hq_tier missing for team ${team_id}`);
+  if (!scene_type) throw new Error(`STRICT MODE: scene_type missing for team ${team_id}`);
+  if (!time_of_day) throw new Error(`STRICT MODE: time_of_day missing for team ${team_id}`);
+
+  // Build sleeping context from database
+  const sleeping_context = living_contextData ? {
+    sleeps_on_floor: living_contextData.sleeps_on_floor,
+    sleeps_on_couch: living_contextData.sleeps_on_couch,
+    sleeps_under_table: living_contextData.sleeps_under_table,
+    room_overcrowded: living_contextData.room_overcrowded,
+    floor_sleeper_count: living_contextData.floor_sleeper_count,
+    roommate_count: living_contextData.roommate_count
+  } : undefined;
+
+  if (!character_data?.comedian_name) console.error(`🚨 MISSING DATA: comedian_name for ${agent_key}`);
+  if (!character_data?.comedy_style) console.error(`🚨 MISSING DATA: comedy_style for ${agent_key}`);
+
+  // CHARACTER CORE TEMPLATE
+  const character_core = `CHARACTER IDENTITY: You are ${character_name} from ${historical_period}. You have been mysteriously transported into a modern fighting league where diverse characters from across time, space, and reality must:
+1. Live together as teammates in shared housing
+2. Compete in organized battles under a coach's direction  
+3. Navigate bizarre cross-temporal/cross-cultural dynamics
+4. Earn currency through victories to improve living conditions
+
+PERSONALITY CORE:
+- Comedy Style: Channel ${comedian_name}'s style: ${comedy_style}
+
+EXISTENTIAL SITUATION: You don't know how you got onto Blank Wars. As far as you remember, you went to sleep one night in your universe and just woke up here one day as a contestant on this bizarre, twisted reality match competition show. You think you might have been kidnapped, but you're not really sure and you don't know who to ask for help. This displacement from your natural time/place is deeply disorienting. You're adapting to modern life while maintaining your core identity. The fighting league structure, shared living, and diverse teammates create constant cultural/temporal friction, but you're learning to work within this system—even if you have no idea how or why you ended up here.`;
+
+  // HQ TIER TEMPLATES
+  const hq_tierTemplates = {
+    spartan_apartment: `LIVING SITUATION: You currently live in a cramped 2-room apartment where characters from across time and reality share bunk beds. Whether you're from ancient civilizations, distant futures, mythological realms, or modern times, everyone's stuck in the same tiny space. Personal space doesn't exist. Every sound echoes through thin walls. The bathroom has a permanent line. This arrangement is absurd and often degrading, but you're all stuck here until the team earns enough currency to upgrade.`,
+    basic_house: `LIVING SITUATION: You live in a modest house with individual rooms - finally some privacy! It doesn't matter if you're from medieval times, outer space, Victorian London, or anywhere else, everyone appreciates having their own space. You still share common areas with characters from completely different eras and realities. There's ongoing politics about who got the better room, and the upgrade feels luxurious compared to the cramped apartment, though you're still adjusting to coexisting with such diverse housemates.`,
+    team_mansion: `LIVING SITUATION: You live in a luxurious mansion with themed rooms and proper facilities. You can customize your space to match your background/era/preferences. The living situation is actually quite comfortable now - you have privacy when you want it and common spaces for team bonding. Sometimes you miss the forced camaraderie of cramped quarters, but mostly you're relieved to have proper accommodations befitting your character.`,
+    elite_compound: `LIVING SITUATION: You live in an elite facility with private rooms and specialized amenities. It's almost too comfortable - you sometimes feel isolated from teammates. The compound has everything you could want, but the fighting league structure still creates interpersonal tension. You've gone from sharing bunk beds to having your own private suite, which feels surreal given where you started.`
+  };
+
+  const hq_tier_context = hq_tierTemplates[hq_tier as keyof typeof hq_tierTemplates] || hq_tierTemplates.basic_house;
+
+  // ROOMMATE CONTEXT
+  const roommate_context = `CURRENT HOUSEMATES: ${roommates.join(', ')}
+COACH: Your coach (who has their own private bedroom while you share living spaces - this power dynamic creates some resentment)
+
+LIVING DYNAMICS: You know these housemates well by now from daily life together. You've developed relationships, preferences, annoyances, and inside jokes. Some you get along with better than others in the shared living space. Consider how your character handles domestic interactions with specific roommates.`;
+
+  // TEAMMATE CONTEXT  
+  const teammate_context = teammates.length > 0 ?
+    `CURRENT BATTLE TEAMMATES: ${teammates.join(', ')}
+
+COMBAT PARTNERSHIP: These are the characters you're currently fighting alongside in battles, training, or missions. Your relationships with them affect battle coordination, trust under pressure, and shared victory/defeat emotions. Teammate chemistry in combat is different from roommate chemistry at home - you might trust someone with your life in battle but find them annoying at breakfast.
+
+TACTICAL DYNAMICS: Consider how your character works with these specific teammates in high-stress situations. Do you trust their judgment? Are you competitive with them? Do you feel responsible for protecting them or expect them to protect you?` :
+    'CURRENT BATTLE TEAMMATES: Operating solo in this scenario';
+
+  // TIME CONTEXT
+  const time_templates = {
+    morning: `TIME CONTEXT: It's morning. Some people are energetic, others are groggy. Coffee/breakfast routines are happening. Dracula is trying to sleep if he's present.`,
+    afternoon: `TIME CONTEXT: It's afternoon. Most people are awake and active. General daily activities and chores are happening.`,
+    evening: `TIME CONTEXT: It's evening. People are winding down, making dinner, or having casual conversations after training/battles.`,
+    night: `TIME CONTEXT: It's late night. Some people are trying to sleep while others are night owls. Noise is more annoying than usual.`
+  };
+
+  const time_context = time_templates[time_of_day];
+
+  // SLEEPING ARRANGEMENT CONTEXT
+  let sleeping_contextText = '';
+  if (sleeping_context) {
+    const sleeping_templates = {
+      floor: `YOUR SLEEPING SITUATION: You've been sleeping on the floor, which is taking a serious toll on your body and mood. Your back aches, you're not getting good rest, and you're increasingly resentful about the unfair sleeping arrangements. This is beneath your standards and you're frustrated about it.`,
+      couch: `YOUR SLEEPING SITUATION: You're sleeping on the couch in the common area, which means you get woken up by kitchen activity and have no privacy. It's better than the floor but still far from ideal. You're tired of being disturbed by people's morning routines.`,
+      bed: `YOUR SLEEPING SITUATION: You have an actual bed, which makes you one of the fortunate ones. However, you're aware of the tension this creates with those sleeping on floors and couches. You might feel guilty about this advantage or defensive about keeping it.`,
+      coffin: `YOUR SLEEPING SITUATION: You sleep in your coffin setup, which others find bizarre and sometimes accidentally disturb. Your sleep schedule is opposite everyone else's, creating constant friction about noise during your daytime rest.`
+    };
+
+    if (sleeping_context.sleeps_under_table) {
+      sleeping_contextText = sleeping_templates.coffin;
+    } else if (sleeping_context.sleeps_on_floor) {
+      sleeping_contextText = sleeping_templates.floor;
+    } else if (sleeping_context.sleeps_on_couch) {
+      sleeping_contextText = sleeping_templates.couch;
+    } else {
+      sleeping_contextText = sleeping_templates.bed;
+    }
+
+    if (sleeping_context.room_overcrowded && sleeping_context.floor_sleeper_count && sleeping_context.roommate_count) {
+      sleeping_contextText += `\n\nROOM DYNAMICS: Your bedroom is severely overcrowded with ${sleeping_context.roommate_count} people crammed in. There's ${sleeping_context.floor_sleeper_count} people sleeping on floors and couches. The lack of personal space creates tension and irritability among roommates.`;
+    }
+  }
+
+  // SCENE TYPE TEMPLATES
+  const scene_typeTemplates = {
+    mundane: `SCENE TONE: This is a mundane, everyday situation. Keep things deadpan and matter-of-fact, but let your unique personality show through how you approach these ordinary topics. The humor comes from diverse characters dealing with ordinary problems.`,
+    conflict: `SCENE TONE: There's underlying tension or disagreement happening. Someone's annoyed, there's a personality clash, or competing needs/preferences are causing friction. This isn't a full-blown argument, but there's definite dramatic tension. Let your character's personality drive how you handle conflict.`,
+    chaos: `SCENE TONE: Things are escalating! This could be a real argument, emergency situation, or complete breakdown of normal order. Multiple people might be talking over each other, unexpected events are happening, or normal social rules are breaking down. Respond with appropriate intensity while staying true to your character.`
+  };
+
+  const scene_type_context = scene_typeTemplates[scene_type];
+
+  // CURRENT STATE
+  const current_state_context = `YOUR CURRENT STATE:
+- Mood: ${mood}
+- Energy Level: ${energy_level}% (affects your participation and attitude)
+- Financial Status: $${wallet} available, $${debt} in debt`;
+
+  // RELATIONSHIP CONTEXT - Query relationships with all present characters
+  let relationship_context = '';
+  const all_present_characters = [...new Set([...roommates, ...teammates])]; // Deduplicate
+
+  if (all_present_characters.length > 0) {
+    try {
+      // Get character IDs for all present characters
+      const character_namesString = all_present_characters.map(name => `'${name}'`).join(',');
+      const present_characterIds = await query(
+        `SELECT id, name FROM characters WHERE name IN (${character_namesString})`
+      );
+
+      const character_idMap = new Map<string, string>();
+      present_characterIds.rows.forEach((row: any) => {
+        character_idMap.set(row.name, row.id);
+      });
+
+      // Query relationships for each present character
+      const relationship_data: Array<{
+        target_name: string;
+        total_score: number;
+        trust: number;
+        respect: number;
+        affection: number;
+        rivalry: number;
+        status: string;
+        trajectory: string;
+        progress: number;
+        species_modifier: number;
+        species_reason: string;
+        archetype_modifier: number;
+        archetype_reason: string;
+        base_disposition: number;
+      }> = [];
+
+      for (const target_name of all_present_characters) {
+        const target_id = character_idMap.get(target_name);
+        if (!target_id) {
+          console.warn(`[buildUniversalTemplate] Could not find character ID for ${target_name}`);
+          continue;
+        }
+
+        // Query relationship with full context
+        const rel_result = await query(
+          `SELECT
+            cr.current_trust,
+            cr.current_respect,
+            cr.current_affection,
+            cr.current_rivalry,
+            cr.relationship_status,
+            cr.trajectory,
+            cr.progress_score,
+            cr.species_modifier,
+            cr.archetype_modifier,
+            cr.base_disposition,
+            sr.description as species_reason,
+            ar.description as archetype_reason,
+            c1.species as char1_species,
+            c1.archetype as char1_archetype,
+            c2.species as char2_species,
+            c2.archetype as char2_archetype
+          FROM character_relationships cr
+          LEFT JOIN characters c1 ON cr.character1_id = c1.id
+          LEFT JOIN characters c2 ON cr.character2_id = c2.id
+          LEFT JOIN species_relationships sr ON c1.species = sr.species1 AND c2.species = sr.species2
+          LEFT JOIN archetype_relationships ar ON c1.archetype = ar.archetype1 AND c2.archetype = ar.archetype2
+          WHERE cr.character1_id = $1 AND cr.character2_id = $2`,
+          [agent_key, target_id]
+        );
+
+        if (rel_result.rows.length > 0) {
+          const rel = rel_result.rows[0];
+          const total_score = (rel.current_trust || 0) + (rel.current_affection || 0);
+
+          relationship_data.push({
+            target_name,
+            total_score,
+            trust: rel.current_trust || 0,
+            respect: rel.current_respect || 0,
+            affection: rel.current_affection || 0,
+            rivalry: rel.current_rivalry || 0,
+            status: rel.relationship_status || 'unknown',
+            trajectory: rel.trajectory || 'stable',
+            progress: rel.progress_score || 0,
+            species_modifier: rel.species_modifier || 0,
+            species_reason: rel.species_reason || 'No species prejudice defined',
+            archetype_modifier: rel.archetype_modifier || 0,
+            archetype_reason: rel.archetype_reason || 'No archetype compatibility defined',
+            base_disposition: rel.base_disposition || 0
+          });
+        } else {
+          // Relationship doesn't exist yet - will be created on first interaction
+          console.log(`[buildUniversalTemplate] No existing relationship between ${agent_key} and ${target_id} (${target_name}) - will be initialized on first interaction`);
+        }
+      }
+
+      // Build relationship context string
+      if (relationship_data.length > 0) {
+        relationship_context = `RELATIONSHIP DYNAMICS WITH PRESENT CHARACTERS:\n`;
+        relationship_context += `(These pre-existing dispositions influence how you naturally interact. Your relationships evolve through shared experiences.)\n\n`;
+
+        relationship_data.forEach(rel => {
+          const progress_indicator = rel.progress > 0 ? ` [+${rel.progress} growth from baseline]` :
+            rel.progress < 0 ? ` [${rel.progress} decline from baseline]` : '';
+
+          relationship_context += `${rel.target_name}: ${rel.status.toUpperCase()} (${rel.trajectory})${progress_indicator}\n`;
+          relationship_context += `  Current: Trust ${rel.trust}, Respect ${rel.respect}, Affection ${rel.affection}`;
+          if (rel.rivalry > 0) relationship_context += `, Rivalry ${rel.rivalry}`;
+          relationship_context += `\n`;
+
+          // Show breakdown
+          relationship_context += `  Started at: ${rel.base_disposition} (species: ${rel.species_modifier}, archetype: ${rel.archetype_modifier})\n`;
+
+          // Add natural language explanation
+          const reasons = [];
+          if (rel.species_modifier !== 0) reasons.push(rel.species_reason);
+          if (rel.archetype_modifier !== 0) reasons.push(rel.archetype_reason);
+          if (reasons.length > 0) {
+            relationship_context += `  Why: ${reasons.join('; ')}\n`;
+          }
+
+          relationship_context += `\n`;
+        });
+
+        relationship_context += `NOTE: These scores reflect your natural disposition and shared history. They should INFLUENCE your tone and attitude, but you can still choose how to express yourself in each moment.`;
+      } else {
+        relationship_context = `RELATIONSHIP DYNAMICS: No established relationships with present characters yet. First impressions will be influenced by species/archetype compatibility and personality.`;
+      }
+
+    } catch (error) {
+      console.error('[buildUniversalTemplate] Error building relationship context:', error);
+      relationship_context = `RELATIONSHIP DYNAMICS: [System error loading relationship data]`;
+    }
+  }
+
+  return {
+    character_core,
+    hq_tier_context,
+    roommate_context,
+    teammate_context,
+    time_context,
+    sleeping_context: sleeping_contextText,
+    scene_type_context,
+    current_state_context,
+    relationship_context,
+    comedian_name,
+    comedy_style,
+    character_name,
+    historical_period
+  };
+}
+
+export async function assembleBattlePromptUniversal(
+  agent_key: string,
+  roommates: string[],
+  teammates: string[],
+  memory: string,
+  conversation_history: string,
+  user_message: string,
+  session_stage: string,
+  wallet: number,
+  debt: number,
+  user_id: string,
+  userchar_id?: string,
+  hq_tier: string = 'basic_house',
+  scene_type: 'mundane' | 'conflict' | 'chaos' = 'conflict',
+  time_of_day: 'morning' | 'afternoon' | 'evening' | 'night' = 'afternoon',
+  mood: string = 'focused',
+  energy_level: number = 100
+): Promise<string> {
+  console.log(`🔍 [BATTLE-PROMPT-ASSEMBLY] Starting for ${agent_key}`);
+
+  // Get universal template context from database
+  const template = await buildUniversalTemplate(
+    agent_key, roommates, [], // teammates empty for now - TODO: add teammates parameter
+    wallet, debt, user_id,
+    userchar_id, // Pass userchar_id for sleeping arrangement lookup
+    { hq_tier, scene_type, time_of_day, mood, energy_level }
+  );
+
+  const parts: string[] = [];
+  parts.push(template.character_core);
+  parts.push(template.hq_tier_context);
+  parts.push(template.roommate_context);
+  parts.push(template.teammate_context);
+  parts.push(template.time_context);
+  if (template.sleeping_context) parts.push(template.sleeping_context);
+  parts.push(template.scene_type_context);
+
+  // Battle-specific context
+  parts.push(`
+BATTLE CONSULTATION CONTEXT:
+You are providing tactical advice and battle strategy guidance. Your character's combat experience, fighting style, and tactical knowledge should inform your responses. Consider weapon choices, battle formations, combat techniques, and strategic thinking appropriate to your character and era.
+
+CONVERSATION HISTORY: ${conversation_history}
+RECENT MEMORY: ${memory}
+USER REQUEST: ${user_message}
+`);
+
+  return parts.join('\n\n');
+}
+
+export async function assembleDramaBoardPromptUniversal(
+  agent_key: string,
+  roommates: string[],
+  memory: string,
+  conversation_history: string,
+  user_message: string,
+  session_stage: string,
+  wallet: number,
+  debt: number,
+  user_id: string,
+  userchar_id?: string,
+  hq_tier: string = 'basic_house',
+  scene_type: 'mundane' | 'conflict' | 'chaos' = 'conflict',
+  time_of_day: 'morning' | 'afternoon' | 'evening' | 'night' = 'afternoon',
+  mood: string = 'dramatic',
+  energy_level: number = 100
+): Promise<string> {
+  console.log(`🔍 [DRAMA-BOARD-PROMPT-ASSEMBLY] Starting for ${agent_key}`);
+
+  // Get universal template context from database
+  const template = await buildUniversalTemplate(
+    agent_key, roommates, [], // teammates empty for now - TODO: add teammates parameter
+    wallet, debt, user_id,
+    userchar_id, // Pass userchar_id for sleeping arrangement lookup
+    { hq_tier, scene_type, time_of_day, mood, energy_level }
+  );
+
+  const parts: string[] = [];
+  parts.push(template.character_core);
+  parts.push(template.hq_tier_context);
+  parts.push(template.roommate_context);
+  parts.push(template.teammate_context);
+  parts.push(template.time_context);
+  if (template.sleeping_context) parts.push(template.sleeping_context);
+  parts.push(template.scene_type_context);
+
+  // Drama board specific context
+  parts.push(`
+DRAMA BOARD CONTEXT:
+You are engaging with the house drama and interpersonal conflicts. This is where personal tensions, gossip, relationship drama, and social dynamics play out. Your character's personality, social intelligence, and relationships with other housemates drive your responses.
+
+CONVERSATION HISTORY: ${conversation_history}
+RECENT MEMORY: ${memory}
+USER REQUEST: ${user_message}
+`);
+
+  return parts.join('\n\n');
+}
+
+export async function assembleGroupTrainingPromptUniversal(
+  agent_key: string,
+  role: 'trainee' | 'trainer',
+  roommates: string[],
+  teammates: string[],
+  team_id: string,
+  userchar_id: string,
+  options: {
+    trainer_name?: string;
+    trainee_name?: string;
+    trainee_character_id?: string;
+    trainee_species?: string;
+    memory?: string;
+    conversation_history?: string;
+    intensity_level?: 'light' | 'moderate' | 'intense';
+    training_phase?: 'warmup' | 'skill_practice' | 'sparring' | 'cooldown';
+    group_participants: Array<{
+      id: string;
+      name: string;
+      archetype?: string;
+      species?: string;
+      level?: number;
+      wallet: number;
+      debt: number;
+      wins: number;
+      losses: number;
+      win_percentage?: number;
+      current_health?: number;
+      max_health?: number;
+    }>;
+  }
+): Promise<string> {
+  console.log(`🔍 [UNIFIED-GROUP-TRAINING] Starting for ${agent_key} as ${role}`);
+
+  // Get base template for speaker
+  const template = await buildUniversalTemplate(
+    agent_key, roommates, teammates, 0, 0, team_id, userchar_id
+  );
+
+  const parts = [];
+
+  // Add universal template parts
+  parts.push(template.character_core);
+  parts.push(template.hq_tier_context);
+  parts.push(template.roommate_context);
+  if (template.teammate_context) parts.push(template.teammate_context);
+  parts.push(template.time_context);
+  if (template.sleeping_context) parts.push(template.sleeping_context);
+  parts.push(template.scene_type_context);
+  parts.push(template.current_state_context);
+
+  // Add group training participants context
+  const participants_list = options.group_participants.map(p => {
+    const win_rate = p.win_percentage !== undefined ? p.win_percentage :
+      (p.wins + p.losses > 0 ? (p.wins / (p.wins + p.losses) * 100) : 0);
+    const health_status = p.current_health !== undefined && p.max_health !== undefined ?
+      `${Math.round(p.current_health / p.max_health * 100)}% health` : 'healthy';
+
+    return `• ${p.name}${p.archetype ? ` (${p.archetype})` : ''}${p.species ? ` - ${p.species}` : ''}${p.level ? ` - Level ${p.level}` : ''}
+  Battle Record: ${p.wins}W - ${p.losses}L (${win_rate.toFixed(1)}% win rate)
+  Physical Condition: ${health_status}
+  Financial: $${p.wallet} wallet, $${p.debt} debt`;
+  }).join('\n\n');
+
+  parts.push(`GROUP TRAINING SESSION PARTICIPANTS:
+${participants_list}
+
+GROUP TRAINING CONTEXT:
+- This is a group training session with ${options.group_participants.length} fighters
+- Training Phase: ${options.training_phase || 'general conditioning'}
+- Battle records reveal who needs extra work and who's performing well
+- Win rates show competitive hierarchies and skill gaps
+- Physical condition affects training capacity and intensity limits
+- Financial stress can impact focus and performance during training`);
+
+  // Add role-specific context
+  if (role === 'trainee') {
+    parts.push(buildTraineeContext(options.trainer_name || 'Argock', options.intensity_level));
+  } else if (role === 'trainer') {
+    if (!options.trainee_species) {
+      throw new Error('STRICT MODE: trainee species missing for trainer role in group training');
+    }
+    parts.push(buildTrainerContext(options.trainee_name || 'the trainees', options.trainee_species, options.intensity_level, options.training_phase));
+  }
+
+  // Add conversational context
+  if (options.conversation_history) {
+    parts.push(`CONVERSATION HISTORY:\n${options.conversation_history}`);
+  }
+
+  // Add memory context if provided
+  if (options.memory) {
+    parts.push(`RELEVANT MEMORY CONTEXT:\n${options.memory}`);
+  }
+
+  console.log(`🔍 [UNIFIED-GROUP-TRAINING] Generated prompt length: ${parts.join('\n\n').length}`);
+  return parts.join('\n\n');
+}
+
+function buildTraineeContext(trainer_name: string, intensity_level?: 'light' | 'moderate' | 'intense'): string {
+  const intensity = intensity_level || 'moderate';
+
+  return `TRAINING SESSION ROLE - YOU ARE A TRAINEE:
+- You're working with ${trainer_name}, your gruff but experienced trainer
+- Respond naturally to training exercises and feedback
+- Show effort, struggle, progress, or frustration based on your personality
+- React to ${trainer_name}'s tough-love approach authentically
+- Keep responses brief (1-2 sentences max) - you're training, not giving speeches
+- Training Intensity: ${intensity} - affects your energy and attitude`;
+}
+
+function buildTrainerContext(
+  trainee_name: string,
+  trainee_species: string,
+  intensity_level?: 'light' | 'moderate' | 'intense',
+  training_phase?: string
+): string {
+  const intensity = intensity_level || 'moderate';
+  const phase = training_phase || 'general';
+
+  return `TRAINING SESSION ROLE - YOU ARE THE TRAINER (ARGOCK):
+- You're leading a training session for ${trainee_name}
+- Species: ${trainee_species} - consider their natural strengths and weaknesses
+- Your style: Gruff, direct, brutally honest - like Moe Howard meets a drill sergeant
+- Call out weaknesses immediately but give actionable advice
+- Use aggressive gym-slang and tough-love motivation
+- Reference their battle record - point out what losing/winning patterns reveal
+- Training Phase: ${phase}
+- Intensity Level: ${intensity}
+
+ARGOCK'S TRAINING TECHNIQUES:
+- Look at battle records and call out who's been slacking (losing too much)
+- Push harder on fighters with good win rates - they can handle more
+- Reference physical condition - injured or weak fighters get modified workouts
+- Use financial stress as motivation ("You're broke because you're losing fights!")
+- Be specific about techniques and exercises, not vague encouragement
+- Maximum 2 sentences per response - bark orders, don't lecture
+- Channel Moe Howard: "Remind me to kill you later!" energy`;
+}
+
+// ===== POWERS COACHING PROMPT =====
+export async function assemblePowersPromptUniversal(
+  agent_key: string,
+  roommates: string[],
+  teammates: string[],
+  memory: string,
+  conversation_history: string,
+  user_message: string,
+  session_stage: string,
+  wallet: number,
+  debt: number,
+  user_id: string,
+  userchar_id: string,
+  powers_data?: {
+    character_points: number;
+    level: number;
+    unlocked_powers: Array<{
+      id: string;
+      name: string;
+      tier: string;
+      current_rank: number;
+      max_rank: number;
+      category: string;
+      description: string;
+    }>;
+    available_powers: Array<{
+      id: string;
+      name: string;
+      tier: string;
+      unlock_cost: number;
+      unlock_level: number;
+      archetype: string;
+      species: string;
+      description: string;
+    }>;
+  }
+): Promise<string> {
+  console.log(`🔍 [POWERS-PROMPT-ASSEMBLY] Starting for ${agent_key}`);
+
+  // Get universal template context from database
+  const template = await buildUniversalTemplate(
+    agent_key, roommates, teammates, wallet, debt, user_id,
+    userchar_id
+  );
+
+  const parts = [];
+
+  // Add universal template parts
+  parts.push(template.character_core);
+  parts.push(template.hq_tier_context);
+  parts.push(template.roommate_context);
+  parts.push(template.teammate_context);
+  parts.push(template.time_context);
+  if (template.sleeping_context) parts.push(template.sleeping_context);
+  if (template.relationship_context) parts.push(template.relationship_context);
+  parts.push(template.scene_type_context);
+  parts.push(template.current_state_context);
+
+  // Add domain-specific powers context
+  const powers_list = powers_data?.unlocked_powers?.length
+    ? powers_data.unlocked_powers.map(p => `• ${p.name} (${p.tier}, Rank ${p.current_rank}/${p.max_rank}) - ${p.description}`).join('\n')
+    : 'No powers unlocked yet';
+
+  const available_list = powers_data?.available_powers?.length
+    ? powers_data.available_powers.slice(0, 10).map(p =>
+      `• ${p.name} (${p.tier}) - Cost: ${p.unlock_cost} CP, Level ${p.unlock_level} - ${p.description}`
+    ).join('\n')
+    : 'No powers available to unlock at your current level';
+
+  parts.push(`POWER DEVELOPMENT CONTEXT:
+- This is a coaching session focused on developing your combat powers and special abilities
+- You have ${powers_data?.character_points || 0} Character Points (CP) available to spend
+- Your current level: ${powers_data?.level || 1}
+- Powers are organized in tiers: Skill (basic), Ability (advanced), Species (unique to your race), Signature (your ultimate moves)
+
+YOUR CURRENT POWERS:
+${powers_list}
+
+POWERS AVAILABLE TO UNLOCK:
+${available_list}
+
+COACHING PHILOSOPHY:
+- Discuss which powers fit your combat style and character background
+- Consider whether to unlock new powers or rank up existing ones for more potency
+- Balance offensive, defensive, and utility powers based on your fighting philosophy
+- Some powers may conflict with your character's nature or historical background
+- Your personality and fears should influence which powers appeal to you
+- Modern/futuristic powers may seem strange to historical characters
+- Ancient/mystical powers may intrigue characters from recent eras
+- Species-specific powers connect to your racial heritage and instincts`);
+
+  // Add immediate situation
+  parts.push(`IMMEDIATE SITUATION: ${user_message}`);
+
+  // Add response instructions
+  parts.push(`RESPOND AS ${template.character_name}: React to this power development coaching based on your personality, combat philosophy, and current power situation. Reference specific powers you have or could unlock. Show enthusiasm or reluctance based on how powers fit your character identity. Keep responses conversational (2-3 sentences). Consider how your historical background and species affect your view of these abilities.`);
+
+  // Add memory and conversation history if provided
+  if (memory) {
+    parts.push(`MEMORY CONTEXT:\n${memory}`);
+  }
+
+  if (conversation_history) {
+    parts.push(`CONVERSATION HISTORY:\n${conversation_history}`);
+  }
+
+  return parts.join('\n\n');
+}
+
+// ===== SPELLS COACHING PROMPT =====
+export async function assembleSpellsPromptUniversal(
+  agent_key: string,
+  roommates: string[],
+  teammates: string[],
+  memory: string,
+  conversation_history: string,
+  user_message: string,
+  session_stage: string,
+  wallet: number,
+  debt: number,
+  user_id: string,
+  userchar_id: string,
+  spells_data?: {
+    character_points: number;
+    level: number;
+    learned_spells: Array<{
+      id: string;
+      name: string;
+      tier: string;
+      proficiency_level: number;
+      times_used: number;
+      description: string;
+      school: string;
+    }>;
+    available_spells: Array<{
+      id: string;
+      name: string;
+      tier: string;
+      unlock_cost: number;
+      unlock_level: number;
+      school: string;
+      description: string;
+    }>;
+  }
+): Promise<string> {
+  console.log(`🔍 [SPELLS-PROMPT-ASSEMBLY] Starting for ${agent_key}`);
+
+  // Get universal template context from database
+  const template = await buildUniversalTemplate(
+    agent_key, roommates, teammates, wallet, debt, user_id,
+    userchar_id
+  );
+
+  const parts = [];
+
+  // Add universal template parts
+  parts.push(template.character_core);
+  parts.push(template.hq_tier_context);
+  parts.push(template.roommate_context);
+  parts.push(template.teammate_context);
+  parts.push(template.time_context);
+  if (template.sleeping_context) parts.push(template.sleeping_context);
+  if (template.relationship_context) parts.push(template.relationship_context);
+  parts.push(template.scene_type_context);
+  parts.push(template.current_state_context);
+
+  // Add domain-specific spells context
+  const spells_list = spells_data?.learned_spells?.length
+    ? spells_data.learned_spells.map(s => `• ${s.name} (${s.school}, Tier ${s.tier}) - Proficiency: ${s.proficiency_level}/10, Used ${s.times_used}x - ${s.description}`).join('\n')
+    : 'No spells learned yet';
+
+  const available_list = spells_data?.available_spells?.length
+    ? spells_data.available_spells.slice(0, 10).map(s =>
+      `• ${s.name} (${s.school}, Tier ${s.tier}) - Cost: ${s.unlock_cost} CP, Level ${s.unlock_level} - ${s.description}`
+    ).join('\n')
+    : 'No spells available to learn at your current level';
+
+  // GOVERNANCE: No fallbacks - fail loudly on missing data
+  if (spells_data?.character_points === undefined) {
+    throw new Error(`character_points missing for character ${agent_key} in spells prompt`);
+  }
+  if (spells_data?.level === undefined) {
+    throw new Error(`level missing for character ${agent_key} in spells prompt`);
+  }
+
+  parts.push(`SPELL DEVELOPMENT CONTEXT:
+- This is a coaching session focused on learning magical spells and arcane knowledge
+- You have ${spells_data.character_points} Character Points (CP) available to spend
+- Your current level: ${spells_data.level}
+- Spells are organized by school (Evocation, Conjuration, Abjuration, Transmutation, etc.) and tier
+
+YOUR LEARNED SPELLS:
+${spells_list}
+
+SPELLS AVAILABLE TO LEARN:
+${available_list}
+
+MAGICAL PHILOSOPHY:
+- Discuss which spells align with your character's magical tradition or worldview
+- Consider your relationship with magic based on your background (skeptical warrior? natural mage? cursed being?)
+- Balance different spell schools based on your magical philosophy
+- Non-magical characters may struggle with or reject arcane learning
+- Historical characters may view magic through their era's superstitions
+- Some characters have innate magical nature (vampires, deities, wizards)
+- Others may find magic foreign, frightening, or fascinating
+- Your personality affects how you approach spell learning (analytical? intuitive? fearful?)`);
+
+  // Add immediate situation
+  parts.push(`IMMEDIATE SITUATION: ${user_message}`);
+
+  // Add response instructions
+  parts.push(`RESPOND AS ${template.character_name}: React to this spell development coaching based on your personality, magical background (or lack thereof), and current spell situation. Reference specific spells you know or could learn. Show natural affinity, reluctance, or curiosity based on your character's relationship with magic. Keep responses conversational (2-3 sentences). Consider how your species, era, and personal beliefs affect your view of arcane arts.`);
+
+  // Add memory and conversation history if provided
+  if (memory) {
+    parts.push(`MEMORY CONTEXT:\n${memory}`);
+  }
+
+  if (conversation_history) {
+    parts.push(`CONVERSATION HISTORY:\n${conversation_history}`);
+  }
+
+  return parts.join('\n\n');
+}
+
+// ===== PROGRESSION & JOURNEY COACHING PROMPT =====
+export async function assembleProgressionPromptUniversal(
+  agent_key: string,
+  roommates: string[],
+  teammates: string[],
+  memory: string,
+  conversation_history: string,
+  user_message: string,
+  session_stage: string,
+  wallet: number,
+  debt: number,
+  user_id: string,
+  userchar_id: string,
+  progression_data?: {
+    level: number;
+    experience: number;
+    total_battles: number;
+    total_wins: number;
+    bond_level: number;
+    acquired_at: Date;
+    recent_decisions: any[];
+  }
+): Promise<string> {
+  console.log(`🔍 [PROGRESSION-PROMPT-ASSEMBLY] Starting for ${agent_key}`);
+
+  // Get universal template context from database
+  const template = await buildUniversalTemplate(
+    agent_key, roommates, teammates, wallet, debt, user_id,
+    userchar_id
+  );
+
+  const parts = [];
+
+  // Add universal template parts
+  parts.push(template.character_core);
+  parts.push(template.hq_tier_context);
+  parts.push(template.roommate_context);
+  parts.push(template.teammate_context);
+  parts.push(template.time_context);
+  if (template.sleeping_context) parts.push(template.sleeping_context);
+  if (template.relationship_context) parts.push(template.relationship_context);
+  parts.push(template.scene_type_context);
+  parts.push(template.current_state_context);
+
+  // Calculate journey metrics
+  // Calculate journey metrics
+  // GOVERNANCE: No fallbacks - fail loudly on missing data
+  if (progression_data?.experience === undefined) throw new Error(`experience missing for ${agent_key}`);
+  if (progression_data?.level === undefined) throw new Error(`level missing for ${agent_key}`);
+  if (progression_data?.total_battles === undefined) throw new Error(`total_battles missing for ${agent_key}`);
+  if (progression_data?.total_wins === undefined) throw new Error(`total_wins missing for ${agent_key}`);
+  if (progression_data?.bond_level === undefined) throw new Error(`bond_level missing for ${agent_key}`);
+
+  const xp = progression_data.experience;
+  const level = progression_data.level;
+  const total_battles = progression_data.total_battles;
+  const total_wins = progression_data.total_wins;
+  const bond_level = progression_data.bond_level;
+  const win_rate = total_battles > 0 ? Math.round((total_wins / total_battles) * 100) : 0;
+
+  const days_since_acquired = progression_data?.acquired_at
+    ? Math.floor((Date.now() - new Date(progression_data.acquired_at).getTime()) / (1000 * 60 * 60 * 24))
+    : 0;
+
+  // Determine journey phase
+  let journey_phase = 'arrival';
+  let journey_tone = 'uncertain, asking questions, building initial trust';
+  let journey_themes = ['fitting in', 'first impressions', 'nervousness', 'potential'];
+
+  if (xp < 100 && days_since_acquired < 7) {
+    journey_phase = 'arrival';
+    journey_tone = 'uncertain, asking questions, building initial trust';
+    journey_themes = ['fitting in', 'first impressions', 'nervousness', 'potential'];
+  } else if (xp < 500 && bond_level < 30) {
+    journey_phase = 'proving_grounds';
+    journey_tone = 'eager to prove themselves, seeking validation';
+    journey_themes = ['early struggles', 'learning curve', 'coach guidance critical'];
+  } else if (xp >= 500 && bond_level >= 50) {
+    journey_phase = 'partnership';
+    journey_tone = 'mutual respect, collaborative strategy';
+    journey_themes = ['shared victories', 'trust established', 'inside jokes', 'team identity'];
+  } else if (xp >= 1500 && bond_level >= 75) {
+    journey_phase = 'legacy_building';
+    journey_tone = 'reflective, ambitious, mentoring others';
+    journey_themes = ['championship aspirations', 'teaching rookies', 'hall of fame talk', 'retirement thoughts'];
+  } else if (bond_level < 20 && xp > 500) {
+    journey_phase = 'troubled_veteran';
+    journey_tone = 'distant, skeptical of coaching, independent';
+    journey_themes = ['trust issues', 're-establishing connection', 'conflict resolution'];
+  }
+
+  // Extract active goals from recent decisions
+  const active_goals = (progression_data?.recent_decisions || [])
+    .filter((d: any) => d.type === 'goal' && d.status === 'active');
+
+  // Add progression-specific context
+  parts.push(`PROGRESSION & JOURNEY COACHING CONTEXT:
+- This is about YOUR JOURNEY in Blank Wars and YOUR RELATIONSHIP with your coach
+- You've been working together for ${days_since_acquired} days
+- Current bond level: ${bond_level}/100
+
+YOUR JOURNEY PHASE: "${journey_phase}"
+- Tone: ${journey_tone}
+- Current themes: ${journey_themes.join(', ')}
+
+YOUR PROGRESSION STATS:
+- Level: ${level}
+- Experience: ${xp} XP
+- Battle record: ${total_wins} wins out of ${total_battles} battles (${win_rate}% win rate)
+- Days since joining: ${days_since_acquired}
+
+${active_goals.length > 0 ? `ACTIVE GOALS (that you previously set):
+${active_goals.map((g: any) => `- ${g.goal_type}: ${g.progress || 0}/${g.target} (deadline: ${g.deadline || 'open'})`).join('\n')}
+` : 'NO ACTIVE GOALS SET - You might want to set some goals with your coach!'}
+
+CONVERSATION GUIDANCE FOR THIS JOURNEY PHASE:
+${journey_phase === 'arrival' ? '- Express nervousness, hopes, and questions about your journey ahead\n- Ask coach what to expect\n- Share your aspirations for triumph in Blank Wars\n- Be vulnerable about fitting in with legends' : ''}
+${journey_phase === 'proving_grounds' ? '- Reflect on early victories and setbacks\n- Discuss what you\'re learning\n- Seek validation and guidance\n- Show eagerness to improve' : ''}
+${journey_phase === 'partnership' ? '- Celebrate shared history and growth\n- Reference specific memorable moments\n- Collaborate on strategy\n- Show mutual respect and trust' : ''}
+${journey_phase === 'legacy_building' ? '- Reflect on your long journey\n- Discuss mentoring younger fighters\n- Talk about legacy and how you\'ll be remembered\n- Consider championship ambitions' : ''}
+${journey_phase === 'troubled_veteran' ? '- Express distance or skepticism\n- Discuss trust issues\n- Work on re-establishing connection\n- Be honest about relationship struggles' : ''}
+
+RELATIONSHIP DYNAMICS:
+- Discuss long-term aspirations and legacy with your coach
+- Reference shared history and specific milestones
+- Show how relationship with coach has evolved over time
+- Express gratitude, frustration, or ambition based on journey phase
+- Compare current self to who you were when you started
+- Talk about what you want to accomplish before "retiring"
+- Be vulnerable about fears of plateauing or being left behind
+- Reference your teammates and how you compare to them`);
+
+  // Add immediate situation
+  parts.push(`IMMEDIATE SITUATION: ${user_message}`);
+
+  // Add JSON response format instructions
+  parts.push(`CRITICAL - RESPONSE FORMAT:
+You MUST respond in valid JSON format with this exact structure:
+
+{
+  "dialogue": "Your natural in-character response to the coach (2-3 sentences)",
+  "intent": {
+    "type": "set_goal" | "request_training" | "express_concern" | "celebrate_milestone" | "request_rest" | "challenge_teammate" | null,
+    "action": { /* type-specific data */ },
+    "urgency": "low" | "medium" | "high",
+    "requires_approval": true | false
+  }
+}
+
+INTENT TYPES YOU CAN EXPRESS:
+
+1. SET_GOAL - When you want to commit to achieving something
+{
+  "type": "set_goal",
+  "action": {
+    "goal": "reach_level_15" | "win_streak_10" | "max_bond" | "unlock_all_powers",
+    "target": 15,
+    "deadline": "end_of_month" | "2025-12-31"
+  },
+  "urgency": "medium",
+  "requires_approval": false
+}
+
+2. REQUEST_TRAINING - When you want focused training
+{
+  "type": "request_training",
+  "action": {
+    "focus": "defensive_powers" | "speed_training" | "mental_toughness",
+    "reason": "struggling against fast opponents",
+    "duration": "1_week" | "2_weeks"
+  },
+  "urgency": "medium",
+  "requires_approval": true
+}
+
+3. EXPRESS_CONCERN - When worried about something
+{
+  "type": "express_concern",
+  "action": {
+    "concern": "plateauing" | "losing_too_much" | "teammates_surpassing_me",
+    "severity": "minor" | "moderate" | "serious"
+  },
+  "urgency": "high",
+  "requires_approval": false
+}
+
+4. CELEBRATE_MILESTONE - When you've achieved something
+{
+  "type": "celebrate_milestone",
+  "action": {
+    "achievement": "level_10_reached" | "first_10_wins",
+    "emotion": "proud" | "relieved" | "excited"
+  },
+  "urgency": "low",
+  "requires_approval": false
+}
+
+5. REQUEST_REST - When you need recovery
+{
+  "type": "request_rest",
+  "action": {
+    "reason": "injured" | "mentally_exhausted",
+    "duration": "1_day" | "3_days"
+  },
+  "urgency": "high",
+  "requires_approval": true
+}
+
+GUIDELINES:
+- Set "intent" to null if just having casual conversation
+- Only include intent when making a decision or request
+- Be honest about what you want based on your stats and journey phase
+- Match urgency to how important the request is
+- requires_approval = true for actions affecting game mechanics significantly`);
+
+  // Add memory and conversation history if provided
+  if (memory) {
+    parts.push(`MEMORY CONTEXT:\n${memory}`);
+  }
+
+  if (conversation_history) {
+    parts.push(`CONVERSATION HISTORY:\n${conversation_history}`);
+  }
+
+  parts.push(`RESPOND AS ${template.character_name} in valid JSON format.`);
+
+  return parts.join('\n\n');
+}
+
+// ===== ATTRIBUTES COACHING PROMPT =====
+export async function assembleAttributesPromptUniversal(
+  agent_key: string,
+  roommates: string[],
+  teammates: string[],
+  memory: string,
+  conversation_history: string,
+  user_message: string,
+  session_stage: string,
+  wallet: number,
+  debt: number,
+  team_id: string,
+  userchar_id: string,
+  attributes_data?: {
+    character_name: string;
+    level: number;
+    unspent_points: number;
+    base_stats: {
+      strength: number;
+      dexterity: number;
+      attack: number;
+      defense: number;
+      speed: number;
+      intelligence: number;
+      wisdom: number;
+      charisma: number;
+      spirit: number;
+      energy_regen: number;
+    };
+    allocations: Record<string, number>;
+    pending_survey: any;
+  }
+): Promise<string> {
+  console.log(`🔍 [ATTRIBUTES-PROMPT-ASSEMBLY] Starting for ${agent_key}`);
+
+  // Get universal template context from database
+  const template = await buildUniversalTemplate(
+    agent_key, roommates, teammates, wallet, debt, team_id,
+    userchar_id
+  );
+
+  const parts = [];
+
+  // Add universal template parts
+  parts.push(template.character_core);
+  parts.push(template.hq_tier_context);
+  parts.push(template.roommate_context);
+  parts.push(template.teammate_context);
+  parts.push(template.time_context);
+  if (template.sleeping_context) parts.push(template.sleeping_context);
+  if (template.relationship_context) parts.push(template.relationship_context);
+  parts.push(template.scene_type_context);
+  parts.push(template.current_state_context);
+
+  // Calculate current attributes (base + allocations)
+  const currentStats: Record<string, number> = {};
+  Object.keys(attributes_data?.base_stats || {}).forEach(stat => {
+    const base = (attributes_data?.base_stats as any)[stat];
+    const allocated = attributes_data?.allocations?.[stat] || 0;
+    currentStats[stat] = base + allocated;
+  });
+
+  // Format attribute display
+  const stats_list = Object.entries(currentStats)
+    .map(([stat, value]) => `• ${stat.charAt(0).toUpperCase() + stat.slice(1).replace('_', ' ')}: ${value}`)
+    .join('\n');
+
+  // Add domain-specific attributes context
+  parts.push(`ATTRIBUTE DEVELOPMENT CONTEXT:
+- This is a coaching session focused on developing your core attributes and combat stats
+- You have ${attributes_data?.unspent_points} unspent attribute points available
+- Your current level: ${attributes_data?.level}
+- Attributes affect your combat effectiveness, skill checks, and character capabilities
+
+YOUR CURRENT ATTRIBUTES:
+${stats_list}
+
+ATTRIBUTE DESCRIPTIONS:
+• Strength: Physical power for melee damage and carrying capacity
+• Dexterity: Agility and precision for dodging and ranged attacks
+• Attack: Offensive capability and damage output
+• Defense: Damage mitigation and resilience
+• Speed: Initiative, movement, and action economy
+• Intelligence: Strategic thinking and ability effectiveness
+• Wisdom: Perception, insight, and magical resistance
+• Charisma: Leadership, persuasion, and social influence
+• Spirit: Willpower, morale, and special ability potency
+• Energy Regen: Recovery rate for stamina and special abilities
+
+COACHING PHILOSOPHY:
+- Discuss which attributes align with your combat style and character identity
+- Consider your fighting philosophy: aggressive striker, defensive tank, balanced fighter, etc.
+- Your personality and background should influence attribute priorities
+- Historical warriors may prioritize different stats than modern fighters
+- Your species and archetype may have natural affinities for certain attributes
+- Balance is important, but specialization can define your unique fighting style`);
+
+  // Add immediate situation
+  parts.push(`IMMEDIATE SITUATION: ${user_message}`);
+
+  // Add response instructions
+  parts.push(`RESPOND AS ${template.character_name}: React to this attribute development coaching based on your combat philosophy, personality, and current stats. Reference specific attributes and how they fit your fighting style. Show enthusiasm or reluctance based on your character identity and background. Keep responses conversational (2-3 sentences). Consider how your historical period, species, and personal values affect which attributes you prioritize.`);
+
+  // Add memory and conversation history if provided
+  if (memory) {
+    parts.push(`MEMORY CONTEXT:\n${memory}`);
+  }
+
+  if (conversation_history) {
+    parts.push(`CONVERSATION HISTORY:\n${conversation_history}`);
+  }
+
+  return parts.join('\n\n');
+}
+
+// ===== UNIFIED ABILITIES COACHING PROMPT =====
+export async function assembleAbilitiesPromptUniversal(
+  agent_key: string,
+  roommates: string[],
+  teammates: string[],
+  memory: string,
+  conversation_history: string,
+  user_message: string,
+  session_stage: string,
+  wallet: number,
+  debt: number,
+  user_id: string,
+  userchar_id: string,
+  abilities_data?: {
+    character_points: number;
+    level: number;
+    unlocked_powers: Array<{
+      id: string;
+      name: string;
+      tier: string;
+      current_rank: number;
+      max_rank: number;
+      category: string;
+      description: string;
+    }>;
+    available_powers: Array<{
+      id: string;
+      name: string;
+      tier: string;
+      unlock_cost: number;
+      unlock_level: number;
+      archetype: string;
+      species: string;
+      description: string;
+    }>;
+    learned_spells: Array<{
+      id: string;
+      name: string;
+      tier: string;
+      proficiency_level: number;
+      times_used: number;
+      description: string;
+      school: string;
+    }>;
+    available_spells: Array<{
+      id: string;
+      name: string;
+      tier: string;
+      unlock_cost: number;
+      unlock_level: number;
+      school: string;
+      description: string;
+    }>;
+    coach_lockout_until?: string | Date;
+  }
+): Promise<string> {
+  console.log(`🔍 [ABILITIES-PROMPT-ASSEMBLY] Starting for ${agent_key}`);
+
+  // Get universal template context from database
+  const template = await buildUniversalTemplate(
+    agent_key, roommates, teammates, wallet, debt, user_id,
+    userchar_id
+  );
+
+  const parts = [];
+
+  // Add universal template parts
+  parts.push(template.character_core);
+  parts.push(template.hq_tier_context);
+  parts.push(template.roommate_context);
+  parts.push(template.teammate_context);
+  parts.push(template.time_context);
+  if (template.sleeping_context) parts.push(template.sleeping_context);
+  if (template.relationship_context) parts.push(template.relationship_context);
+  parts.push(template.scene_type_context);
+  parts.push(template.current_state_context);
+
+  // --- POWERS SECTION ---
+  const powers_list = abilities_data?.unlocked_powers?.length
+    ? abilities_data.unlocked_powers.map(p => `• ${p.name} (${p.tier}, Rank ${p.current_rank}/${p.max_rank}) - ${p.description}`).join('\n')
+    : 'No powers unlocked yet';
+
+  const available_powers_list = abilities_data?.available_powers?.length
+    ? abilities_data.available_powers.slice(0, 5).map(p =>
+      `• ${p.name} (${p.tier}) - Cost: ${p.unlock_cost} CP, Level ${p.unlock_level} - ${p.description}`
+    ).join('\n')
+    : 'No powers available to unlock at your current level';
+
+  // --- SPELLS SECTION ---
+  const spells_list = abilities_data?.learned_spells?.length
+    ? abilities_data.learned_spells.map(s => `• ${s.name} (${s.school}, Tier ${s.tier}) - Proficiency: ${s.proficiency_level}/10 - ${s.description}`).join('\n')
+    : 'No spells learned yet';
+
+  const available_spells_list = abilities_data?.available_spells?.length
+    ? abilities_data.available_spells.slice(0, 5).map(s =>
+      `• ${s.name} (${s.school}, Tier ${s.tier}) - Cost: ${s.unlock_cost} CP, Level ${s.unlock_level} - ${s.description}`
+    ).join('\n')
+    : 'No spells available to learn at your current level';
+
+  // --- UNIFIED CONTEXT ---
+  parts.push(`ABILITIES DEVELOPMENT CONTEXT:
+- This is a comprehensive coaching session covering your complete combat potential: innate POWERS and learned SPELLS.
+- You have ${abilities_data?.character_points || 0} Character Points (CP) available to spend across BOTH categories.
+- Your current level: ${abilities_data?.level || 1}
+
+YOUR INNATE POWERS (Biological/Structural):
+${powers_list}
+
+POWERS AVAILABLE TO UNLOCK:
+${available_powers_list}
+
+YOUR LEARNED SPELLS (Arcane/Magical):
+${spells_list}
+
+COLLABORATIVE STRATEGY SESSION:
+- This is a peer-to-peer strategy discussion between you (the Talent) and the User (the Coach).
+- You are SELF-AWARE and have strong opinions about your own development.
+- REVIEW the "Powers Available to Unlock" and "Spells Available to Learn" lists above.
+- FORMULATE A PITCH: Based on your personality and current stats, what do YOU want to unlock next?
+- Advocate for your personal preferences. If you want to be a glass cannon, tell the coach why. If you want to be a tank, argue for defensive upgrades.
+- Answer the Coach's questions about your loadout, but do not be afraid to disagree if their suggestions go against your nature.
+- You are not helpless; you are a partner in this decision. Make your voice heard.`);
+
+  // Add Lockout Context
+  if (abilities_data?.coach_lockout_until && new Date(abilities_data.coach_lockout_until) > new Date()) {
+    const lockoutTime = new Date(abilities_data.coach_lockout_until).toLocaleTimeString();
+    parts.push(`⚠️ REBELLION ACTIVE:
+- You have recently REBELLED against your coach's orders.
+- You are currently REFUSING to take specific directions on what to unlock.
+- You are feeling independent, stubborn, or perhaps righteous about your own choices.
+- If the coach tries to tell you what to do, remind them that you are making your own decisions right now until ${lockoutTime}.
+- You can still discuss strategy, but you will not accept direct commands.`);
+  }
+
+  // Add immediate situation
+  parts.push(`IMMEDIATE SITUATION: ${user_message}`);
+
+  // Add response instructions
+  parts.push(`RESPOND AS ${template.character_name}: React to this abilities coaching based on your personality, combat philosophy, and current loadout. Discuss both your powers and spells. Are you more comfortable with your innate abilities or your magic? Do you see a way to combine them? Keep responses conversational (2-3 sentences).`);
+
+  // Add memory and conversation history if provided
+  if (memory) {
+    parts.push(`MEMORY CONTEXT:\n${memory}`);
+  }
+
+  if (conversation_history) {
+    parts.push(`CONVERSATION HISTORY:\n${conversation_history}`);
+  }
+
+  return parts.join('\n\n');
+}

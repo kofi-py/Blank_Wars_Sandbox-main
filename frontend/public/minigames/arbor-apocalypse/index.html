@@ -1,0 +1,467 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Arbor Apocalypse</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Arial', sans-serif;
+            overflow: hidden;
+            background: #87CEEB; /* Sky blue to match scene */
+        }
+
+        #gameCanvas {
+            display: block;
+            width: 100vw;
+            height: 100vh;
+            position: fixed;
+            top: 0;
+            left: 0;
+        }
+
+        #ui {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            pointer-events: none;
+        }
+
+        #hud {
+            display: flex;
+            justify-content: space-between;
+            padding: 20px;
+            color: #1a3a52;
+            font-size: 24px;
+            font-weight: bold;
+            text-shadow: 2px 2px 4px rgba(255,255,255,0.8);
+        }
+
+        .hud-item {
+            background: rgba(255, 255, 255, 0.9);
+            padding: 10px 20px;
+            border-radius: 8px;
+            border: 3px solid #1a3a52;
+        }
+
+        .screen-logo {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            width: 120px;
+            opacity: 1;
+            z-index: 1000;
+        }
+
+        #startScreen, #endScreen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(26, 58, 82, 0.95);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            color: white;
+            pointer-events: all;
+            z-index: 100; /* Below logo (z-index: 1000) */
+        }
+
+        #startScreen h1, #endScreen h1 {
+            font-size: 48px;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+
+        #startScreen p, #endScreen p {
+            font-size: 20px;
+            margin-bottom: 10px;
+            text-align: center;
+            max-width: 600px;
+            padding: 0 20px;
+        }
+
+        button {
+            font-size: 24px;
+            padding: 15px 40px;
+            margin-top: 20px;
+            background: white;
+            color: #1a3a52;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: bold;
+            pointer-events: all;
+            transition: transform 0.2s;
+        }
+
+        button:hover {
+            transform: scale(1.05);
+        }
+
+        .hidden {
+            display: none !important;
+        }
+
+        #instructions {
+            margin-top: 20px;
+            font-size: 18px;
+            text-align: center;
+        }
+
+        #purchaseScreen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(26, 58, 82, 0.95);
+            display: flex;
+            flex-direction: column;
+            justify-content: flex-start;
+            align-items: center;
+            color: white;
+            pointer-events: all;
+            z-index: 100; /* Below logo (z-index: 1000) */
+            overflow-y: auto;
+            overflow-x: hidden;
+            padding: 20px 10px 100px 10px; /* Extra bottom padding for safe scrolling */
+            -webkit-overflow-scrolling: touch; /* Smooth scrolling on iOS */
+        }
+
+        .tree-option {
+            background: rgba(255, 255, 255, 0.1);
+            border: 3px solid white;
+            border-radius: 12px;
+            padding: 20px 30px;
+            margin: 15px;
+            width: 400px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .tree-option:hover {
+            background: rgba(255, 255, 255, 0.2);
+            transform: scale(1.05);
+        }
+
+        .tree-option h3 {
+            font-size: 28px;
+            margin-bottom: 10px;
+        }
+
+        .tree-option p {
+            font-size: 16px;
+            margin: 5px 0;
+        }
+
+        .profit-info {
+            margin-top: 10px;
+            padding-top: 10px;
+            border-top: 2px solid rgba(255, 255, 255, 0.3);
+            font-size: 14px;
+            color: #90EE90;
+        }
+
+        #budgetDisplay {
+            position: absolute;
+            top: 30px;
+            right: 30px;
+            font-size: 32px;
+            font-weight: bold;
+            background: rgba(255, 255, 255, 0.2);
+            padding: 15px 30px;
+            border-radius: 8px;
+        }
+
+        #highScores {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            padding: 20px;
+            width: 600px;
+            max-width: 90%;
+        }
+
+        #highScores h3 {
+            text-align: center;
+            margin-bottom: 15px;
+            font-size: 24px;
+        }
+
+        .high-scores-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .high-score-entry {
+            display: grid;
+            grid-template-columns: 50px 150px 1fr;
+            gap: 15px;
+            padding: 10px 15px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 8px;
+            align-items: center;
+            font-size: 16px;
+        }
+
+        .high-score-entry.rank-1 {
+            background: rgba(255, 215, 0, 0.2);
+            border: 2px solid gold;
+            font-weight: bold;
+        }
+
+        .high-score-entry .rank {
+            font-size: 20px;
+            font-weight: bold;
+            color: #FFD700;
+        }
+
+        .high-score-entry .score {
+            font-size: 22px;
+            font-weight: bold;
+            color: #90EE90;
+        }
+
+        .high-score-entry .details {
+            font-size: 14px;
+            color: rgba(255, 255, 255, 0.7);
+        }
+
+        /* Mobile Controls */
+        #mobileControls {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            height: 180px;
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-end;
+            padding: 0 20px 20px 20px;
+            pointer-events: none;
+            z-index: 100;
+        }
+
+        .mobile-steering {
+            display: flex;
+            gap: 15px;
+            pointer-events: none;
+        }
+
+        .mobile-speed {
+            display: flex;
+            gap: 15px;
+            pointer-events: none;
+        }
+
+        .mobile-btn {
+            width: 80px;
+            height: 80px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.3);
+            border: 3px solid rgba(255, 255, 255, 0.6);
+            color: white;
+            font-size: 40px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            pointer-events: auto;
+            user-select: none;
+            -webkit-user-select: none;
+            touch-action: manipulation;
+            transition: all 0.1s;
+        }
+
+        .mobile-speed-btn {
+            font-size: 28px;
+            line-height: 1;
+        }
+
+        .mobile-btn:active {
+            background: rgba(255, 255, 255, 0.5);
+            transform: scale(0.95);
+        }
+
+        #mobileHint {
+            position: absolute;
+            bottom: 210px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.6);
+            color: white;
+            padding: 10px 20px;
+            border-radius: 20px;
+            font-size: 14px;
+            pointer-events: none;
+            animation: fadeInOut 4s ease-in-out;
+        }
+
+        @keyframes fadeInOut {
+            0%, 100% { opacity: 0; }
+            10%, 90% { opacity: 1; }
+        }
+
+        /* Responsive adjustments for mobile */
+        @media (max-width: 768px) {
+            #hud {
+                font-size: 16px;
+                padding: 10px;
+            }
+
+            .hud-item {
+                padding: 5px 10px;
+            }
+
+            #purchaseScreen h1,
+            #startScreen h1,
+            #endScreen h1 {
+                font-size: 28px;
+            }
+
+            #purchaseScreen h1 {
+                margin-top: 20px;
+            }
+
+            .tree-option {
+                padding: 15px;
+                margin: 10px 0;
+            }
+
+            #startBtn, #restartBtn {
+                font-size: 20px;
+                padding: 12px 30px;
+            }
+
+            #budgetDisplay {
+                position: static;
+                margin: 10px 0;
+                font-size: 24px;
+                padding: 10px 20px;
+            }
+        }
+
+        @media (max-width: 480px) {
+            #hud {
+                font-size: 14px;
+                padding: 8px;
+            }
+
+            .hud-item {
+                padding: 4px 8px;
+            }
+
+            .mobile-btn {
+                width: 70px;
+                height: 70px;
+                font-size: 35px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+
+    <div id="ui">
+        <div id="hud">
+            <div class="hud-item">Level: <span id="levelDisplay">1</span></div>
+            <div class="hud-item">Trees: <span id="treeCount">12</span></div>
+            <div class="hud-item">Distance: <span id="distance">0</span>m</div>
+            <div class="hud-item">Score: <span id="score">0</span></div>
+        </div>
+    </div>
+
+    <div id="purchaseScreen">
+        <div id="budgetDisplay">Budget: $<span id="budgetAmount">400</span></div>
+        <img class="screen-logo" src="wisesage_logo.png" alt="Wise Sage">
+        <h1>🌳 Select Your Tree Inventory 🌳</h1>
+        <p style="font-size: 18px; margin-bottom: 30px;">Choose 12 trees to purchase and deliver</p>
+
+        <div class="tree-option" id="budgetOption">
+            <h3>🌲 Green Giant</h3>
+            <p><strong>Cost:</strong> $10/tree × 12 = $120</p>
+            <p><strong>Sell Price:</strong> $30/tree</p>
+            <p class="profit-info">
+                ✓ Break even: 6 trees<br>
+                ✓ Max profit: $240 (all 12 delivered)<br>
+                ⚠️ Lower risk, lower reward
+            </p>
+        </div>
+
+        <div class="tree-option" id="standardOption">
+            <h3>🌲 Emerald Green</h3>
+            <p><strong>Cost:</strong> $15/tree × 12 = $180</p>
+            <p><strong>Sell Price:</strong> $40/tree</p>
+            <p class="profit-info">
+                ✓ Break even: 6 trees<br>
+                ✓ Max profit: $300 (all 12 delivered)<br>
+                ⚖️ Balanced risk and reward
+            </p>
+        </div>
+
+        <div class="tree-option" id="premiumOption">
+            <h3>🌲 American Pillar</h3>
+            <p><strong>Cost:</strong> $20/tree × 12 = $240</p>
+            <p><strong>Sell Price:</strong> $50/tree</p>
+            <p class="profit-info">
+                ✓ Break even: 6 trees<br>
+                ✓ Max profit: $360 (all 12 delivered)<br>
+                🔥 High risk, high reward!
+            </p>
+        </div>
+    </div>
+
+    <div id="startScreen" class="hidden">
+        <img class="screen-logo" src="wisesage_logo.png" alt="Wise Sage">
+        <h1>🚚 Arbor Apocalypse 🌳</h1>
+        <p>Deliver trees through the apocalypse!</p>
+        <p><strong>Controls:</strong> Arrow Keys or WASD</p>
+        <p>← → / A D: Steer | ↑ ↓ / W S: Gas & Brake</p>
+        <p>Dodge meteors, avoid traffic, flee zombies, and drive through puddles to put out fires!</p>
+        <button id="startBtn">Start Delivery</button>
+    </div>
+
+    <div id="endScreen" class="hidden">
+        <img class="screen-logo" src="wisesage_logo.png" alt="Wise Sage">
+        <h1>Delivery Complete!</h1>
+        <p id="resultText"></p>
+        <p id="earningsText" style="white-space: pre-line;"></p>
+        <div id="highScores" style="margin-top: 20px; max-height: 300px; overflow-y: auto;"></div>
+        <button id="restartBtn">Next Delivery</button>
+    </div>
+
+    <!-- Mobile Virtual Controls -->
+    <div id="mobileControls" style="display: none;">
+        <div class="mobile-steering">
+            <button id="leftBtn" class="mobile-btn">◀</button>
+            <button id="rightBtn" class="mobile-btn">▶</button>
+        </div>
+        <div class="mobile-speed">
+            <button id="gasBtn" class="mobile-btn mobile-speed-btn">⬆<br><span style="font-size: 12px;">GAS</span></button>
+            <button id="brakeBtn" class="mobile-btn mobile-speed-btn">⬇<br><span style="font-size: 12px;">BRAKE</span></button>
+        </div>
+        <div id="mobileHint">Tap arrows to control truck</div>
+    </div>
+
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"
+            }
+        }
+    </script>
+    <script src="landscape-themes.js"></script>
+    <script type="module" src="game.js"></script>
+</body>
+</html>

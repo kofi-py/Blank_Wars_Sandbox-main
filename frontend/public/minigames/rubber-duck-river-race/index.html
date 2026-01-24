@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rubber Duck River Race</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Arial', sans-serif;
+            overflow: hidden;
+            background: #87CEEB;
+        }
+
+        #gameCanvas {
+            display: block;
+            width: 100vw;
+            height: 100vh;
+            position: fixed;
+            top: 0;
+            left: 0;
+        }
+
+        #ui {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            pointer-events: none;
+        }
+
+        #hud {
+            display: flex;
+            justify-content: space-between;
+            padding: 20px;
+            color: #1a3a52;
+            font-size: 24px;
+            font-weight: bold;
+            text-shadow: 2px 2px 4px rgba(255,255,255,0.8);
+        }
+
+        .hud-item {
+            background: rgba(255, 255, 255, 0.9);
+            padding: 10px 20px;
+            border-radius: 8px;
+            border: 3px solid #1a3a52;
+        }
+
+        #startScreen, #endScreen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(26, 58, 82, 0.95);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            color: white;
+            pointer-events: all;
+            z-index: 200;
+            padding-top: 40px;
+            overflow-y: auto;
+        }
+
+        #startScreen h1, #endScreen h1 {
+            font-size: 48px;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+
+        #startScreen p, #endScreen p {
+            font-size: 20px;
+            margin-bottom: 10px;
+            text-align: center;
+            max-width: 600px;
+            padding: 0 20px;
+        }
+
+        button {
+            font-size: 24px;
+            padding: 15px 40px;
+            margin-top: 20px;
+            background: white;
+            color: #1a3a52;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: bold;
+            pointer-events: all;
+            transition: transform 0.2s;
+        }
+
+        button:hover {
+            transform: scale(1.05);
+        }
+
+        /* Rotary logo removed from screen overlay - now in 3D scene as banners! */
+
+        /* Sponsor logo in bottom right corner */
+        .sponsor-logo {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            width: 120px;
+            opacity: 0.9;
+        }
+
+        .hidden {
+            display: none !important;
+        }
+
+        #waterfallWarning {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(255, 0, 0, 0.9);
+            color: white;
+            padding: 30px 60px;
+            border-radius: 15px;
+            font-size: 36px;
+            font-weight: bold;
+            text-align: center;
+            border: 5px solid yellow;
+            box-shadow: 0 0 30px rgba(255, 255, 0, 0.8);
+            animation: pulse 1s infinite;
+            display: none;
+            z-index: 50;
+        }
+
+        #uphillWarning {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0, 100, 255, 0.9);
+            color: white;
+            padding: 30px 60px;
+            border-radius: 15px;
+            font-size: 36px;
+            font-weight: bold;
+            text-align: center;
+            border: 5px solid cyan;
+            box-shadow: 0 0 30px rgba(0, 255, 255, 0.8);
+            animation: pulse 1s infinite;
+            display: none;
+            z-index: 50;
+        }
+
+        @keyframes pulse {
+            0%, 100% { transform: translate(-50%, -50%) scale(1); }
+            50% { transform: translate(-50%, -50%) scale(1.05); }
+        }
+
+        /* Mobile Virtual Controls */
+        #mobileControls {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            height: 180px;
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-end;
+            padding: 0 20px 20px 20px;
+            pointer-events: none;
+            z-index: 100;
+        }
+
+        .mobile-steering {
+            display: flex;
+            gap: 15px;
+            pointer-events: none;
+        }
+
+        .mobile-speed {
+            display: flex;
+            gap: 15px;
+            pointer-events: none;
+        }
+
+        .mobile-btn {
+            width: 80px;
+            height: 80px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.3);
+            border: 3px solid rgba(255, 255, 255, 0.6);
+            color: white;
+            font-size: 40px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            pointer-events: auto;
+            user-select: none;
+            -webkit-user-select: none;
+            touch-action: manipulation;
+            transition: all 0.1s;
+        }
+
+        .mobile-speed-btn {
+            font-size: 28px;
+            line-height: 1;
+        }
+
+        .mobile-btn:active {
+            background: rgba(255, 255, 255, 0.5);
+            transform: scale(0.95);
+        }
+
+        /* Responsive adjustments for mobile */
+        @media (max-width: 768px) {
+            #hud {
+                font-size: 16px;
+                padding: 10px;
+            }
+
+            .hud-item {
+                padding: 5px 10px;
+            }
+
+            #startScreen h1,
+            #endScreen h1 {
+                font-size: 24px;
+                line-height: 1.3;
+            }
+
+            #startScreen img[src="rotary_3.png"],
+            #endScreen img[src="rotary_3.png"] {
+                width: 120px !important;
+                margin-bottom: 10px !important;
+            }
+
+            #startScreen h1 img,
+            #endScreen h1 img {
+                width: 40px !important;
+                margin-right: 5px !important;
+            }
+
+            button {
+                font-size: 20px;
+                padding: 12px 30px;
+            }
+        }
+
+        @media (max-width: 480px) {
+            #hud {
+                font-size: 14px;
+                padding: 8px;
+            }
+
+            .hud-item {
+                padding: 4px 8px;
+            }
+
+            .mobile-btn {
+                width: 70px;
+                height: 70px;
+                font-size: 35px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+
+    <div id="ui">
+        <!-- Waterfall Warning -->
+        <div id="waterfallWarning">
+            ⚠️ WATERFALL AHEAD!<br>
+            HIT SPACE TO JUMP
+        </div>
+
+        <!-- Uphill Warning -->
+        <div id="uphillWarning">
+            💪 PADDLE!<br>
+            TAP UP/W TO GO FASTER
+        </div>
+
+        <div id="hud">
+            <div class="hud-item">Position: <span id="position">1</span>/<span id="totalDucks">2000</span></div>
+            <div class="hud-item">Health: <span id="health">100</span>%</div>
+            <div class="hud-item">Distance: <span id="distance">0</span>m</div>
+            <div class="hud-item">Time: <span id="time">0:00</span></div>
+            <div class="hud-item">Score: <span id="score">0</span></div>
+        </div>
+
+        <!-- Rotary Logo -->
+        <!-- Rotary logo now in 3D scene as banners on canyon walls! -->
+    </div>
+
+    <div id="startScreen">
+        <img src="wisesage_logo.png" alt="WiseSage.ai" class="sponsor-logo">
+        <h1><img src="duck_image.jpg" alt="Rubber Duck" style="width: 60px; vertical-align: middle; border-radius: 8px; margin-right: 10px;"> Rubber Duck River Race 🌊</h1>
+        <p>Navigate your rubber duck down a treacherous river!</p>
+        <p><strong>Controls:</strong> Arrow Keys or WASD</p>
+        <p>← → / A D: Steer | ↑ ↓ / W S: Speed Control | SPACE: Jump!</p>
+        <p>Race against 10 other ducks! Dodge obstacles and bump competitors into danger!</p>
+        <button id="startBtn">Start Race</button>
+    </div>
+
+    <div id="endScreen" class="hidden">
+        <img src="wisesage_logo.png" alt="WiseSage.ai" class="sponsor-logo">
+        <h1><img src="duck_image.jpg" alt="Rubber Duck" style="width: 60px; vertical-align: middle; border-radius: 8px; margin-right: 10px;"> Race Complete!</h1>
+        <p id="resultText"></p>
+        <p id="finalScore"></p>
+        <button id="restartBtn">Race Again</button>
+    </div>
+
+    <!-- Mobile Virtual Controls -->
+    <div id="mobileControls" style="display: none;">
+        <div class="mobile-steering">
+            <button id="leftBtn" class="mobile-btn">◀</button>
+            <button id="jumpBtn" class="mobile-btn mobile-speed-btn" style="font-size: 18px; font-weight: bold;">HOP</button>
+            <button id="rightBtn" class="mobile-btn">▶</button>
+        </div>
+        <div class="mobile-speed">
+            <button id="gasBtn" class="mobile-btn mobile-speed-btn">⬆<br><span style="font-size: 12px;">FAST</span></button>
+            <button id="brakeBtn" class="mobile-btn mobile-speed-btn">⬇<br><span style="font-size: 12px;">SLOW</span></button>
+        </div>
+    </div>
+
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"
+            }
+        }
+    </script>
+    <script type="module" src="game.js?v=171"></script>
+</body>
+</html>

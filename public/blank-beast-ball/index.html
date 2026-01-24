@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Blank Beast Ball</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="menu-screen" class="screen">
+        <h1>🦁 BLANK BEAST BALL 🎾</h1>
+        <p class="subtitle">Beast Characters. Beast Obstacles. Ball Chaos!</p>
+
+        <div id="level-select" style="margin: 20px auto; text-align: center;">
+            <h3>Select Level</h3>
+            <div style="display: flex; gap: 20px; justify-content: center; margin-bottom: 30px;">
+                <button id="level1-btn" class="level-btn selected" data-level="1">
+                    <div class="level-icon">🌊</div>
+                    <div class="level-name">Level 1</div>
+                    <div class="level-desc">Ocean Course</div>
+                </button>
+                <button id="level2-btn" class="level-btn" data-level="2">
+                    <div class="level-icon">🌋</div>
+                    <div class="level-name">Level 2</div>
+                    <div class="level-desc">Volcano Course</div>
+                </button>
+                <button id="level3-btn" class="level-btn" data-level="3">
+                    <div class="level-icon">❄️</div>
+                    <div class="level-name">Level 3</div>
+                    <div class="level-desc">Arctic Ice</div>
+                </button>
+            </div>
+        </div>
+
+        <div id="character-select">
+            <!-- Characters will be dynamically loaded from Blank Wars data -->
+        </div>
+        <div id="instructions">
+            <h3>Controls</h3>
+            <p>WASD - Move | Q/E - Rotate | SPACE - Jump</p>
+            <p>🎾 Bounce on colored balls to reach the finish!</p>
+            <p>🟢 Green = Safe | 🔵 Blue = Medium | 🟡 Yellow = High | 🔴 Red = SUPER!</p>
+        </div>
+    </div>
+
+    <div id="game-screen" class="screen hidden">
+        <div id="hud">
+            <div id="character-name"></div>
+            <div id="timer">Time: 0.0s</div>
+            <div id="checkpoint">Checkpoint: Start</div>
+            <div id="combo">Combo: 0x</div>
+        </div>
+        <div id="controls-reminder" style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(0,0,0,0.8); color: white; padding: 30px; border-radius: 10px; text-align: center; font-size: 18px; z-index: 1000;">
+            <h2 style="margin-top: 0; color: #FFD700;">🎮 CONTROLS</h2>
+            <p><strong>WASD</strong> - Move</p>
+            <p><strong>Q / E</strong> - Rotate Camera</p>
+            <p><strong>SPACE</strong> - Jump</p>
+            <p style="margin-top: 20px; color: #00FF00;">Jump on colored balls to bounce!</p>
+            <p style="font-size: 14px; color: #AAAAAA;">Press SPACE to start</p>
+        </div>
+        <div id="game-container"></div>
+    </div>
+
+    <div id="gameover-screen" class="screen hidden">
+        <div id="result-content">
+            <h1 id="result-title"></h1>
+            <p id="result-message"></p>
+            <p id="final-time"></p>
+            <button id="restart-btn">Play Again</button>
+            <button id="menu-btn">Back to Menu</button>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/loaders/GLTFLoader.js"></script>
+    <script src="ball-physics.js?v=47"></script>
+    <script src="animal-hazards.js?v=47"></script>
+    <script src="model-loader.js?v=47"></script>
+    <script src="level2.js?v=47"></script>
+    <script src="level3.js?v=47"></script>
+    <script src="game.js?v=47"></script>
+</body>
+</html>

@@ -1,0 +1,101 @@
+digraph "Economy & Resources" {
+  rankdir=TB;
+  node [shape=plaintext];
+  edge [color="#666666", penwidth=1.5];
+  bgcolor="transparent";
+
+  labelloc="t";
+  label="Economy & Resources\nManaging team money & gear - Both you AND your characters have wallets";
+  fontsize=16;
+  fontname="Arial Bold";
+
+  user_currency [label=<
+    <TABLE BORDER="2" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white">
+      <TR><TD BGCOLOR="#27AE60" ALIGN="CENTER"><FONT COLOR="white" POINT-SIZE="14"><B>user_currency</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="user_id">user_id 🔑 : text</TD></TR>
+      <TR><TD ALIGN="CENTER" BGCOLOR="#F0F0F0"><I>+ 3 more columns</I></TD></TR>
+    </TABLE>
+  >];
+
+  user_items [label=<
+    <TABLE BORDER="2" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white">
+      <TR><TD BGCOLOR="#27AE60" ALIGN="CENTER"><FONT COLOR="white" POINT-SIZE="14"><B>user_items</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="id">id 🔑 : uuid</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="user_id">user_id : text</TD></TR>
+      <TR><TD ALIGN="CENTER" BGCOLOR="#F0F0F0"><I>+ 4 more columns</I></TD></TR>
+    </TABLE>
+  >];
+
+  user_equipment [label=<
+    <TABLE BORDER="2" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white">
+      <TR><TD BGCOLOR="#27AE60" ALIGN="CENTER"><FONT COLOR="white" POINT-SIZE="14"><B>user_equipment</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="id">id 🔑 : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="user_id">user_id : text</TD></TR>
+      <TR><TD ALIGN="CENTER" BGCOLOR="#F0F0F0"><I>+ 11 more columns</I></TD></TR>
+    </TABLE>
+  >];
+
+  user_characters [label=<
+    <TABLE BORDER="2" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white">
+      <TR><TD BGCOLOR="#27AE60" ALIGN="CENTER"><FONT COLOR="white" POINT-SIZE="14"><B>user_characters</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="id">id 🔑 : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="user_id">user_id : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="character_id">character_id : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="bond_level">bond_level : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="wallet"><B>wallet</B> : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="current_mental_health"><B>current_mental_health</B> : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="team_trust">team_trust : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="morale">morale : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="debt">debt : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="financial_personality"><B>financial_personality</B> : jsonb</TD></TR>
+      <TR><TD ALIGN="CENTER" BGCOLOR="#F0F0F0"><I>+ 44 more columns</I></TD></TR>
+    </TABLE>
+  >];
+
+  card_packs [label=<
+    <TABLE BORDER="2" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white">
+      <TR><TD BGCOLOR="#27AE60" ALIGN="CENTER"><FONT COLOR="white" POINT-SIZE="14"><B>card_packs</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="id">id 🔑 : uuid</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="name">name : character varying</TD></TR>
+      <TR><TD ALIGN="CENTER" BGCOLOR="#F0F0F0"><I>+ 15 more columns</I></TD></TR>
+    </TABLE>
+  >];
+
+  claimable_packs [label=<
+    <TABLE BORDER="2" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white">
+      <TR><TD BGCOLOR="#27AE60" ALIGN="CENTER"><FONT COLOR="white" POINT-SIZE="14"><B>claimable_packs</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="id">id 🔑 : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="user_id">user_id : text</TD></TR>
+      <TR><TD ALIGN="CENTER" BGCOLOR="#F0F0F0"><I>+ 6 more columns</I></TD></TR>
+    </TABLE>
+  >];
+
+  claimable_pack_contents [label=<
+    <TABLE BORDER="2" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white">
+      <TR><TD BGCOLOR="#27AE60" ALIGN="CENTER"><FONT COLOR="white" POINT-SIZE="14"><B>claimable_pack_contents</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="id">id 🔑 : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="character_id">character_id : text</TD></TR>
+      <TR><TD ALIGN="CENTER" BGCOLOR="#F0F0F0"><I>+ 2 more columns</I></TD></TR>
+    </TABLE>
+  >];
+
+  purchases [label=<
+    <TABLE BORDER="2" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white">
+      <TR><TD BGCOLOR="#27AE60" ALIGN="CENTER"><FONT COLOR="white" POINT-SIZE="14"><B>purchases</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="id">id 🔑 : uuid</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="user_id">user_id : text</TD></TR>
+      <TR><TD ALIGN="CENTER" BGCOLOR="#F0F0F0"><I>+ 21 more columns</I></TD></TR>
+    </TABLE>
+  >];
+
+  challenge_rewards [label=<
+    <TABLE BORDER="2" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white">
+      <TR><TD BGCOLOR="#27AE60" ALIGN="CENTER"><FONT COLOR="white" POINT-SIZE="14"><B>challenge_rewards</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="id">id 🔑 : uuid</TD></TR>
+      <TR><TD ALIGN="CENTER" BGCOLOR="#F0F0F0"><I>+ 8 more columns</I></TD></TR>
+    </TABLE>
+  >];
+
+  // Relationships
+  claimable_pack_contents:claimable_pack_id -> claimable_packs:id;
+}

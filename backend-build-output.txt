@@ -1,0 +1,22 @@
+
+> blankwars-backend@1.0.0 build
+> npm run generate-types && sh scripts/prebuild.sh && tsc --noEmitOnError false --skipLibCheck
+
+
+> blankwars-backend@1.0.0 generate-types
+> ts-node scripts/generate-types.ts
+
+[dotenv@17.2.3] injecting env (37) from .env -- tip: 🔐 prevent building .env in docker: https://dotenvx.com/prebuild
+🔧 Generating TypeScript types from database...
+✅ Database connection established
+  Generating Archetype...
+  ✅ Archetype: 13 values
+  Generating Species...
+  ✅ Species: 17 values
+  Generating CharacterRarity...
+  ✅ CharacterRarity: 5 values
+  Generating PowerTier...
+  ✅ PowerTier: 4 values
+  Generating SpellTier...
+  ✅ SpellTier: 4 values
+✅ Types generated successfully: /Users/gabrielgreenstein/Blank_Wars_2026/backend/src/types/generated.ts

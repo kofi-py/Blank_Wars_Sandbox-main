@@ -1,0 +1,81 @@
+digraph "Competitive Events" {
+  rankdir=TB;
+  node [shape=plaintext];
+  edge [color="#666666", penwidth=1.5];
+  bgcolor="transparent";
+
+  labelloc="t";
+  label="Competitive Events\nWhere your AIs compete - Battles & Reality Show Challenges";
+  fontsize=16;
+  fontname="Arial Bold";
+
+  battles [label=<
+    <TABLE BORDER="2" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white">
+      <TR><TD BGCOLOR="#3498DB" ALIGN="CENTER"><FONT COLOR="white" POINT-SIZE="14"><B>battles</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="id">id 🔑 : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="status">status : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="current_round">current_round : integer</TD></TR>
+      <TR><TD ALIGN="CENTER" BGCOLOR="#F0F0F0"><I>+ 16 more columns</I></TD></TR>
+    </TABLE>
+  >];
+
+  challenge_leaderboard [label=<
+    <TABLE BORDER="2" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white">
+      <TR><TD BGCOLOR="#3498DB" ALIGN="CENTER"><FONT COLOR="white" POINT-SIZE="14"><B>challenge_leaderboard</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="id">id 🔑 : uuid</TD></TR>
+      <TR><TD ALIGN="CENTER" BGCOLOR="#F0F0F0"><I>+ 13 more columns</I></TD></TR>
+    </TABLE>
+  >];
+
+  challenge_templates [label=<
+    <TABLE BORDER="2" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white">
+      <TR><TD BGCOLOR="#3498DB" ALIGN="CENTER"><FONT COLOR="white" POINT-SIZE="14"><B>challenge_templates</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="id">id 🔑 : uuid</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="name">name : character varying</TD></TR>
+      <TR><TD ALIGN="CENTER" BGCOLOR="#F0F0F0"><I>+ 15 more columns</I></TD></TR>
+    </TABLE>
+  >];
+
+  active_challenges [label=<
+    <TABLE BORDER="2" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white">
+      <TR><TD BGCOLOR="#3498DB" ALIGN="CENTER"><FONT COLOR="white" POINT-SIZE="14"><B>active_challenges</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="id">id 🔑 : uuid</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="user_id">user_id : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="status">status : character varying</TD></TR>
+      <TR><TD ALIGN="CENTER" BGCOLOR="#F0F0F0"><I>+ 7 more columns</I></TD></TR>
+    </TABLE>
+  >];
+
+  challenge_results [label=<
+    <TABLE BORDER="2" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white">
+      <TR><TD BGCOLOR="#3498DB" ALIGN="CENTER"><FONT COLOR="white" POINT-SIZE="14"><B>challenge_results</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="id">id 🔑 : uuid</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="winner_character_id">winner_character_id : text</TD></TR>
+      <TR><TD ALIGN="CENTER" BGCOLOR="#F0F0F0"><I>+ 10 more columns</I></TD></TR>
+    </TABLE>
+  >];
+
+  challenge_alliances [label=<
+    <TABLE BORDER="2" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white">
+      <TR><TD BGCOLOR="#3498DB" ALIGN="CENTER"><FONT COLOR="white" POINT-SIZE="14"><B>challenge_alliances</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="id">id 🔑 : uuid</TD></TR>
+      <TR><TD ALIGN="CENTER" BGCOLOR="#F0F0F0"><I>+ 9 more columns</I></TD></TR>
+    </TABLE>
+  >];
+
+  challenge_participants [label=<
+    <TABLE BORDER="2" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white">
+      <TR><TD BGCOLOR="#3498DB" ALIGN="CENTER"><FONT COLOR="white" POINT-SIZE="14"><B>challenge_participants</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="id">id 🔑 : uuid</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="placement">placement : integer</TD></TR>
+      <TR><TD ALIGN="CENTER" BGCOLOR="#F0F0F0"><I>+ 10 more columns</I></TD></TR>
+    </TABLE>
+  >];
+
+  // Relationships
+  active_challenges:challenge_template_id -> challenge_templates:id;
+  challenge_results:active_challenge_id -> active_challenges:id;
+  challenge_results:challenge_template_id -> challenge_templates:id;
+  challenge_alliances:active_challenge_id -> active_challenges:id;
+  challenge_participants:active_challenge_id -> active_challenges:id;
+}

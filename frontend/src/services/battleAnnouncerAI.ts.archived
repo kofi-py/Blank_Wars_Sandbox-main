@@ -1,0 +1,83 @@
+/**
+ * Battle Announcer AI Service
+ * Generates dynamic narrative descriptions for battle actions using OpenAI API
+ * Observes deterministic battle outcomes and narrates what happened
+ */
+
+import { BattleCharacter, ExecutedAction } from '@/data/battleFlow';
+import { PhysicalActionOutcome } from '@/systems/physicalBattleEngine';
+
+import apiClient from './apiClient';
+
+export interface AnnouncerContext {
+  attacker: BattleCharacter;
+  target: BattleCharacter;
+  action: ExecutedAction;
+  outcome: PhysicalActionOutcome;
+  round_number: number;
+  battle_state_summary: {
+    player_team_name: string;
+    opponent_team_name: string;
+    player_characters_alive: number;
+    opponent_characters_alive: number;
+  };
+  previous_narrations?: string[];
+}
+
+export interface AnnouncerResponse {
+  narrative_description: string;
+  animation_metadata: {
+    action_type: string;
+    intensity: 'low' | 'medium' | 'high' | 'critical';
+    hit_result: 'miss' | 'glancing' | 'solid' | 'critical';
+    visual_effects?: string[];
+  };
+}
+
+/**
+ * Generate battle narration by calling OpenAI API with full battle context
+ */
+export async function generateBattleNarration(context: AnnouncerContext): Promise<AnnouncerResponse> {
+  const response = await apiClient.post('/ai/battle-announcer', {
+    attacker: {
+      name: context.attacker.character.name,
+      archetype: context.attacker.character.archetype,
+      current_health: context.attacker.current_health,
+      personality_traits: context.attacker.character.personality_traits
+    },
+    target: {
+      name: context.target.character.name,
+      archetype: context.target.character.archetype,
+      current_health: context.target.current_health
+    },
+    action: {
+      type: context.action.type,
+      character_id: context.action.character_id,
+      target: context.action.target
+    },
+    outcome: {
+      damage: context.outcome.physical_damage.final_damage,
+      damage_breakdown: context.outcome.physical_damage.damage_breakdown,
+      health_change: context.outcome.health_change,
+      status_effects_applied: context.outcome.status_effectsApplied,
+      counter_attack_triggered: context.outcome.counter_attack_triggered,
+      success: context.outcome.success
+    },
+    battle_context: {
+      round_number: context.round_number,
+      player_team_name: context.battle_state_summary.player_team_name,
+      opponent_team_name: context.battle_state_summary.opponent_team_name,
+      player_characters_alive: context.battle_state_summary.player_characters_alive,
+      opponent_characters_alive: context.battle_state_summary.opponent_characters_alive
+    },
+    previous_narrations: context.previous_narrations
+  });
+
+  const data = response.data;
+
+  if (!data.success) {
+    throw new Error(data.error || 'Battle announcer AI failed to generate narration');
+  }
+
+  return data.narration;
+}

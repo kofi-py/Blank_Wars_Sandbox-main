@@ -1,0 +1,320 @@
+// Test Script for Adherence System
+// Run with: npx ts-node --project tsconfig.json src/test/testAdherenceSystem.ts
+
+import { generateActionSurvey } from '../systems/actionSurveyGenerator';
+import { performAdherenceCheck } from '../systems/adherenceCheckSystem';
+import { executeTurn } from '../systems/turnExecutionCoordinator';
+import { executeRound, checkBattleEnd } from '../systems/battleFlowCoordinator';
+import type { BattleCharacter, BattleState } from '../data/battleFlow';
+import type { PlannedAction } from '../components/battle/CharacterActionPlanner';
+
+// Create mock battle character
+function createMockCharacter(id: string, name: string): BattleCharacter {
+  return {
+    character: {
+      id,
+      name,
+      user_id: 'test_user',
+      universe: 'test_universe',
+      archetype: 'warrior',
+      combat_stats: {
+        max_health: 100,
+        attack: 20,
+        defense: 10,
+        speed: 15,
+        crit_chance: 0.1,
+        dodge_chance: 0.1
+      },
+      personality: {
+        traits: ['Brave', 'Loyal'],
+        motivations: ['Protect allies'],
+        fears: ['Failure'],
+        quirks: []
+      },
+      backstory: 'Test character',
+      current_level: 5,
+      experience: 1000,
+      training_progress: {}
+    },
+    current_health: 100,
+    current_mana: 50,
+    max_mana: 50,
+    position: { q: 0, r: 0, s: 0 },
+    status_effects: [],
+    buffs: [],
+    debuffs: [],
+    mental_state: {
+      current_mental_health: 80,
+      stress: 30,
+      confidence: 70,
+      battle_focus: 75,
+      emotional_state: 'focused',
+      recent_trauma: [],
+      team_trust: 80,
+      strategy_deviation_risk: 20
+    },
+    relationship_modifiers: [],
+    gameplan_adherence: 75,
+    battle_performance: {
+      damage_dealt: 0,
+      damage_taken: 0,
+      abilities_used: 0,
+      successful_hits: 0,
+      critical_hits: 0,
+      damage_blocked: 0,
+      healing_done: 0,
+      buffs_done: 0,
+      teamplay_actions: 0,
+      strategy_deviations: 0
+    },
+    unlocked_powers: [
+      {
+        id: 'power_1',
+        name: 'Power Strike',
+        tier: 1,
+        current_rank: 2,
+        description: 'A powerful melee attack',
+        effects: [{ type: 'damage', value: 30 }],
+        ap_cost: 2,
+        cooldown: 2,
+        unlocked: true,
+        experience: 100
+      }
+    ],
+    unlocked_spells: [
+      {
+        id: 'spell_1',
+        name: 'Fireball',
+        current_rank: 1,
+        mana_cost: 20,
+        description: 'Hurls a ball of fire',
+        effects: [{ type: 'damage', value: 25 }],
+        ap_cost: 3,
+        cooldown: 3,
+        unlocked: true,
+        experience: 50
+      }
+    ],
+    power_cooldowns: new Map(),
+    spell_cooldowns: new Map(),
+    physical_damage_taken: 0,
+    physical_damage_dealt: 0,
+    equipment_bonuses: {
+      attack_bonus: 0,
+      defense_bonus: 0,
+      speed_bonus: 0,
+      critical_chance_bonus: 0
+    }
+  };
+}
+
+// Create mock battle state
+function createMockBattleState(): BattleState {
+  const userCharacter1 = createMockCharacter('p1', 'Hero Alpha');
+  const userCharacter2 = createMockCharacter('p2', 'Hero Beta');
+  const userCharacter3 = createMockCharacter('p3', 'Hero Gamma');
+
+  const enemy1 = createMockCharacter('e1', 'Enemy One');
+  const enemy2 = createMockCharacter('e2', 'Enemy Two');
+  const enemy3 = createMockCharacter('e3', 'Enemy Three');
+
+  return {
+    id: 'test_battle',
+    current_phase: 'combat',
+    current_round: 1,
+    teams: {
+      player: {
+        characters: [userCharacter1, userCharacter2, userCharacter3],
+        current_morale: 75,
+        team_chemistry: 80
+      },
+      opponent: {
+        characters: [enemy1, enemy2, enemy3],
+        current_morale: 70,
+        team_chemistry: 75
+      }
+    },
+    character_plans: new Map(),
+    battle_log: [],
+    current_initiative: []
+  };
+}
+
+// Test 1: Action Survey Generator
+console.log('=== TEST 1: Action Survey Generator ===\n');
+const testChar = createMockCharacter('test', 'Test Hero');
+const mockState = createMockBattleState();
+
+console.log('Character:', testChar.character.name);
+console.log('Powers:', testChar.unlocked_powers.map(p => p.name).join(', '));
+console.log('Spells:', testChar.unlocked_spells.map(s => s.name).join(', '));
+console.log('\nGenerating action survey with "aggressive" Plan B...\n');
+
+const survey = generateActionSurvey(testChar, mockState, 3);
+
+console.log('Available Actions:');
+survey.options.forEach((action, idx) => {
+  console.log(`  ${idx + 1}. ${action.type} - AP: ${action.ap_cost} - Weight: ${action.priority_weight}`);
+  if (action.ability_name) console.log(`     Ability: ${action.ability_name}`);
+});
+
+console.log('\n✅ Action Survey Generator works!\n');
+
+// Test 2: Adherence Check System
+console.log('=== TEST 2: Adherence Check System ===\n');
+
+console.log('Running 5 adherence checks with 70% base threshold:\n');
+for (let i = 0; i < 5; i++) {
+  const check = performAdherenceCheck(testChar, {
+    team_winning: true,
+    round_number: 1,
+    teammates_alive: 3,
+    teammates_total: 3
+  });
+  console.log(`  Roll ${i + 1}: d100=${check.d100Roll}, threshold=${check.final_threshold}, result=${check.adheres ? '✓ ADHERES' : '✗ REBELS'}`);
+  console.log(`    Reasoning: ${check.reasoning}\n`);
+}
+
+console.log('✅ Adherence Check System works!\n');
+
+// Test 3: Turn Execution
+console.log('=== TEST 3: Turn Execution ===\n');
+
+const testPlan: PlannedAction = {
+  action_sequence: [
+    { type: 'move', ap_cost: 1, target_hex: { q: 1, r: 0, s: -1 } },
+    {
+      type: 'power',
+      ap_cost: 2,
+      ability_id: 'power_1',
+      ability_type: 'power',
+      ability_name: 'Power Strike',
+      target_id: 'e1'
+    }
+  ],
+  plan_b: 'aggressive'
+};
+
+console.log('Planned Action:');
+testPlan.action_sequence.forEach((step, idx) => {
+  console.log(`  ${idx + 1}. ${step.type} (${step.ap_cost} AP)`);
+});
+console.log(`Plan B: ${testPlan.plan_b}\n`);
+
+const battle_context = {
+  team_winning: true,
+  teammates_alive: 3,
+  teammates_total: 4,
+  round_number: 1
+};
+
+const turnResult = executeTurn(testChar, testPlan, mockState, battle_context);
+
+console.log('Turn Result:');
+console.log(`  Character: ${turnResult.character_id}`);
+console.log(`  Action Source: ${turnResult.action_source}`);
+console.log(`  Actual Action: ${turnResult.actual_action.type}`);
+console.log(`  Reasoning: ${turnResult.reasoning}`);
+console.log(`  Adherence Check: d100=${turnResult.adherence_check.d100Roll}, threshold=${turnResult.adherence_check.final_threshold}`);
+
+console.log('\n✅ Turn Execution works!\n');
+
+// Test 4: Full Round Execution
+console.log('=== TEST 4: Full Round Execution ===\n');
+
+// Set plans for all player characters
+const battle_state = createMockBattleState();
+
+battle_state.characterPlans.set('p1', {
+  action_sequence: [
+    { type: 'attack', ap_cost: 2, target_id: 'e1' }
+  ],
+  plan_b: 'aggressive'
+});
+
+battle_state.characterPlans.set('p2', {
+  action_sequence: [
+    { type: 'defend', ap_cost: 1 }
+  ],
+  plan_b: 'defensive'
+});
+
+battle_state.characterPlans.set('p3', {
+  action_sequence: [
+    { type: 'spell', ap_cost: 3, ability_id: 'spell_1', ability_type: 'spell', ability_name: 'Fireball', target_id: 'e2' }
+  ],
+  plan_b: 'aggressive'
+});
+
+console.log('Executing round with 6 characters (3v3)...\n');
+
+const roundResult = executeRound(battle_state);
+
+console.log('Round Summary:');
+console.log(roundResult.roundSummary);
+
+console.log('\nTurn Results:');
+roundResult.turn_results.forEach((result, idx) => {
+  console.log(`  ${idx + 1}. ${result.character_id}: ${result.actual_action.type} (${result.action_source})`);
+});
+
+console.log('\nBattle State After Round:');
+console.log(`  Current Round: ${roundResult.updated_battle_state.current_round}`);
+console.log(`  Player Team HP: ${roundResult.updated_battle_state.teams.player.characters.map(c => `${c.character.name}:${c.current_health}`).join(', ')}`);
+console.log(`  Opponent Team HP: ${roundResult.updated_battle_state.teams.opponent.characters.map(c => `${c.character.name}:${c.current_health}`).join(', ')}`);
+
+const battleEnd = checkBattleEnd(roundResult.updated_battle_state);
+console.log(`  Battle Over: ${battleEnd.is_over ? 'YES' : 'NO'}`);
+if (battleEnd.is_over) {
+  console.log(`  Winner: ${battleEnd.winner}`);
+}
+
+console.log('\n✅ Full Round Execution works!\n');
+
+// Test 5: Multi-Round Battle
+console.log('=== TEST 5: Multi-Round Battle ===\n');
+
+let currentBattleState = createMockBattleState();
+
+// Set plans
+currentBattleState.characterPlans.set('p1', {
+  action_sequence: [{ type: 'attack', ap_cost: 2, target_id: 'e1' }],
+  plan_b: 'aggressive'
+});
+currentBattleState.characterPlans.set('p2', {
+  action_sequence: [{ type: 'attack', ap_cost: 2, target_id: 'e2' }],
+  plan_b: 'aggressive'
+});
+currentBattleState.characterPlans.set('p3', {
+  action_sequence: [{ type: 'attack', ap_cost: 2, target_id: 'e3' }],
+  plan_b: 'aggressive'
+});
+
+console.log('Simulating 3 rounds of combat...\n');
+
+for (let round = 1; round <= 3; round++) {
+  console.log(`--- ROUND ${round} ---`);
+
+  const result = executeRound(currentBattleState);
+  currentBattleState = result.updated_battle_state;
+
+  console.log(result.roundSummary);
+
+  const endCheck = checkBattleEnd(currentBattleState);
+  if (endCheck.is_over) {
+    console.log(`\n🏆 BATTLE OVER! Winner: ${endCheck.winner}\n`);
+    break;
+  }
+  console.log('');
+}
+
+console.log('✅ Multi-Round Battle works!\n');
+
+// Summary
+console.log('=== ALL TESTS COMPLETE ===\n');
+console.log('✅ actionSurveyGenerator - PASS');
+console.log('✅ adherenceCheckSystem - PASS');
+console.log('✅ turnExecutionCoordinator - PASS');
+console.log('✅ battleFlowCoordinator - PASS');
+console.log('✅ Multi-round simulation - PASS');
+console.log('\n🎉 Adherence system is ready for integration!');

@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Word Bubble Features Test - Billboard & Occlusion</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #1a1a2e;
+            color: #eee;
+            overflow: hidden;
+        }
+
+        #container {
+            width: 100vw;
+            height: 100vh;
+            position: relative;
+        }
+
+        #info {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 20px;
+            border-radius: 8px;
+            border: 2px solid #00b894;
+            z-index: 100;
+            max-width: 400px;
+        }
+
+        h1 {
+            color: #00b894;
+            margin-bottom: 15px;
+            font-size: 18px;
+        }
+
+        .section {
+            margin-bottom: 15px;
+        }
+
+        .section h2 {
+            color: #74b9ff;
+            font-size: 14px;
+            margin-bottom: 8px;
+        }
+
+        .feature {
+            margin-left: 10px;
+            font-size: 12px;
+            line-height: 1.6;
+        }
+
+        .feature strong {
+            color: #fdcb6e;
+        }
+
+        .controls {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.8);
+            padding: 15px 25px;
+            border-radius: 8px;
+            border: 2px solid #00b894;
+            text-align: center;
+            z-index: 100;
+        }
+
+        .controls p {
+            font-size: 14px;
+            margin-bottom: 10px;
+            color: #74b9ff;
+        }
+
+        button {
+            background: #00b894;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 13px;
+            margin: 5px;
+            transition: all 0.3s;
+        }
+
+        button:hover {
+            background: #00d4a0;
+            transform: scale(1.05);
+        }
+
+        button:active {
+            transform: scale(0.95);
+        }
+
+        .status {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 15px;
+            border-radius: 8px;
+            border: 2px solid #fdcb6e;
+            z-index: 100;
+        }
+
+        .status-item {
+            font-size: 12px;
+            margin-bottom: 5px;
+        }
+
+        .status-item .label {
+            color: #74b9ff;
+        }
+
+        .status-item .value {
+            color: #00b894;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <div id="container"></div>
+
+    <div id="info">
+        <h1>🎮 Industry Standard 3D Bubble Features Test</h1>
+
+        <div class="section">
+            <h2>✅ Transform Property</h2>
+            <div class="feature">
+                Bubbles follow 3D world transforms properly. <strong>Rotate the camera</strong> - bubbles stay locked to character positions.
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>✅ Sprite Property (Billboard Effect)</h2>
+            <div class="feature">
+                Bubbles always face the camera. <strong>Rotate around the scene</strong> - bubbles rotate to face you from any angle.
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>✅ Occlude Property</h2>
+            <div class="feature">
+                Bubbles hide when behind 3D objects. <strong>Move behind a character</strong> - their bubble fades/hides.
+            </div>
+        </div>
+    </div>
+
+    <div class="controls">
+        <p>🖱️ <strong>Drag</strong> to rotate camera | <strong>Scroll</strong> to zoom</p>
+        <button id="toggleBubbles">Toggle Bubbles</button>
+        <button id="toggleRotation">Auto-Rotate: ON</button>
+        <button id="resetCamera">Reset Camera</button>
+    </div>
+
+    <div class="status">
+        <div class="status-item">
+            <span class="label">Camera Angle:</span>
+            <span class="value" id="cameraAngle">0°</span>
+        </div>
+        <div class="status-item">
+            <span class="label">Billboard Active:</span>
+            <span class="value" id="billboardStatus">✓ YES</span>
+        </div>
+        <div class="status-item">
+            <span class="label">Occlusion Active:</span>
+            <span class="value" id="occlusionStatus">✓ YES</span>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script>
+        // Scene setup
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x1a1a2e);
+
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.set(0, 3, 8);
+        camera.lookAt(0, 0, 0);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.getElementById('container').appendChild(renderer.domElement);
+
+        // Lighting
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+        scene.add(ambientLight);
+
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+        directionalLight.position.set(5, 10, 5);
+        scene.add(directionalLight);
+
+        // Create "Kitchen Table" (simple platform)
+        const tableGeometry = new THREE.BoxGeometry(6, 0.2, 4);
+        const tableMaterial = new THREE.MeshPhongMaterial({ color: 0x8B4513 });
+        const table = new THREE.Mesh(tableGeometry, tableMaterial);
+        table.position.y = 0;
+        scene.add(table);
+
+        // Create character models (simple cylinders with spheres for heads)
+        const characters = [];
+        const characterPositions = [
+            { name: 'Merlin', position: [-2, 1, 2], color: 0x9b59b6 },
+            { name: 'Achilles', position: [2, 1, 2], color: 0xe74c3c },
+            { name: 'Cleopatra', position: [2, 1, -2], color: 0xf39c12 },
+            { name: 'Joan', position: [-2, 1, -2], color: 0x3498db },
+            { name: 'Dracula', position: [0, 1, 0], color: 0x2c3e50 }
+        ];
+
+        characterPositions.forEach(char => {
+            const group = new THREE.Group();
+
+            // Body
+            const bodyGeometry = new THREE.CylinderGeometry(0.3, 0.3, 1.5, 16);
+            const bodyMaterial = new THREE.MeshPhongMaterial({ color: char.color });
+            const body = new THREE.Mesh(bodyGeometry, bodyMaterial);
+            body.position.y = 0.75;
+            group.add(body);
+
+            // Head
+            const headGeometry = new THREE.SphereGeometry(0.35, 16, 16);
+            const headMaterial = new THREE.MeshPhongMaterial({ color: 0xffdbac });
+            const head = new THREE.Mesh(headGeometry, headMaterial);
+            head.position.y = 1.8;
+            group.add(head);
+
+            group.position.set(char.position[0], char.position[1], char.position[2]);
+            group.userData.name = char.name;
+            scene.add(group);
+            characters.push({ group, head, name: char.name });
+        });
+
+        // Create speech bubbles as sprites (HTML-like billboards)
+        const bubbles = [];
+        let bubblesVisible = true;
+
+        function createBubble(text, position) {
+            // Create canvas for bubble text
+            const canvas = document.createElement('canvas');
+            const context = canvas.getContext('2d');
+            canvas.width = 256;
+            canvas.height = 128;
+
+            // Draw bubble background
+            context.fillStyle = '#ffffff';
+            context.strokeStyle = '#2d3436';
+            context.lineWidth = 4;
+            context.beginPath();
+            context.roundRect(10, 10, 236, 90, 15);
+            context.fill();
+            context.stroke();
+
+            // Draw text
+            context.fillStyle = '#2d3436';
+            context.font = 'bold 20px Arial';
+            context.textAlign = 'center';
+            context.fillText(text, 128, 60);
+
+            // Create sprite from canvas
+            const texture = new THREE.CanvasTexture(canvas);
+            const spriteMaterial = new THREE.SpriteMaterial({
+                map: texture,
+                transparent: true,
+                depthTest: true,  // This enables occlusion
+                depthWrite: false
+            });
+
+            const sprite = new THREE.Sprite(spriteMaterial);
+            sprite.scale.set(2, 1, 1);
+            sprite.position.copy(position);
+            sprite.position.y += 1.2;  // Position above head
+
+            return sprite;
+        }
+
+        // Create bubbles for each character
+        characters.forEach(char => {
+            const bubblePos = char.head.position.clone();
+            char.group.localToWorld(bubblePos);
+            const bubble = createBubble(char.name, bubblePos);
+            scene.add(bubble);
+            bubbles.push({ sprite: bubble, character: char });
+        });
+
+        // Camera controls (mouse drag)
+        let isDragging = false;
+        let previousMousePosition = { x: 0, y: 0 };
+        let cameraAngle = 0;
+        let autoRotate = true;
+
+        renderer.domElement.addEventListener('mousedown', (e) => {
+            isDragging = true;
+            autoRotate = false;
+            document.getElementById('toggleRotation').textContent = 'Auto-Rotate: OFF';
+        });
+
+        renderer.domElement.addEventListener('mousemove', (e) => {
+            if (isDragging) {
+                const deltaX = e.clientX - previousMousePosition.x;
+                const deltaY = e.clientY - previousMousePosition.y;
+
+                cameraAngle += deltaX * 0.01;
+                const radius = Math.sqrt(camera.position.x ** 2 + camera.position.z ** 2);
+                camera.position.x = radius * Math.sin(cameraAngle);
+                camera.position.z = radius * Math.cos(cameraAngle);
+                camera.position.y += deltaY * 0.01;
+                camera.lookAt(0, 1, 0);
+
+                document.getElementById('cameraAngle').textContent = Math.round(cameraAngle * 180 / Math.PI) + '°';
+            }
+            previousMousePosition = { x: e.clientX, y: e.clientY };
+        });
+
+        renderer.domElement.addEventListener('mouseup', () => {
+            isDragging = false;
+        });
+
+        // Zoom controls
+        renderer.domElement.addEventListener('wheel', (e) => {
+            e.preventDefault();
+            const zoomSpeed = 0.1;
+            const direction = e.deltaY > 0 ? 1 : -1;
+            camera.position.multiplyScalar(1 + direction * zoomSpeed);
+        });
+
+        // Button controls
+        document.getElementById('toggleBubbles').addEventListener('click', () => {
+            bubblesVisible = !bubblesVisible;
+            bubbles.forEach(b => b.sprite.visible = bubblesVisible);
+            document.getElementById('toggleBubbles').textContent =
+                bubblesVisible ? 'Hide Bubbles' : 'Show Bubbles';
+        });
+
+        document.getElementById('toggleRotation').addEventListener('click', () => {
+            autoRotate = !autoRotate;
+            document.getElementById('toggleRotation').textContent =
+                autoRotate ? 'Auto-Rotate: ON' : 'Auto-Rotate: OFF';
+        });
+
+        document.getElementById('resetCamera').addEventListener('click', () => {
+            camera.position.set(0, 3, 8);
+            camera.lookAt(0, 1, 0);
+            cameraAngle = 0;
+            document.getElementById('cameraAngle').textContent = '0°';
+        });
+
+        // Animation loop
+        function animate() {
+            requestAnimationFrame(animate);
+
+            // Auto-rotate if enabled
+            if (autoRotate) {
+                cameraAngle += 0.005;
+                const radius = Math.sqrt(camera.position.x ** 2 + camera.position.z ** 2);
+                camera.position.x = radius * Math.sin(cameraAngle);
+                camera.position.z = radius * Math.cos(cameraAngle);
+                camera.lookAt(0, 1, 0);
+                document.getElementById('cameraAngle').textContent = Math.round(cameraAngle * 180 / Math.PI) + '°';
+            }
+
+            // Update bubble positions to follow characters
+            // This demonstrates the "transform" property - bubbles stay locked to characters
+            bubbles.forEach(b => {
+                const worldPos = b.character.head.position.clone();
+                b.character.group.localToWorld(worldPos);
+                b.sprite.position.copy(worldPos);
+                b.sprite.position.y += 1.2;
+            });
+
+            // Sprites automatically face camera (billboard effect)
+            // This is built into THREE.Sprite - demonstrates the "sprite" property
+
+            // Occlusion is handled by depthTest: true in the material
+            // Bubbles will fade/hide when behind solid objects
+
+            renderer.render(scene, camera);
+        }
+
+        animate();
+
+        // Handle window resize
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+    </script>
+</body>
+</html>

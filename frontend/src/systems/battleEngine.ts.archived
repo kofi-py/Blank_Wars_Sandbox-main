@@ -1,0 +1,1621 @@
+// Battle Engine - CORRECTED: Physical Combat with Psychology Modifiers
+// Psychology affects combat performance but the core system is physical damage/HP
+
+import { audioService } from '../services/audioService';
+import { BattleStateManager } from './battleStateManager';
+import {
+  BattleState,
+  CombatRound,
+  BattleCharacter,
+  GameplanAdherenceCheck,
+  RogueAction,
+  MoraleEvent,
+  CombatAction,
+  ExecutedAction,
+  PlannedAction,
+  PreBattleHuddle,
+  CoachingTimeout,
+  TimeoutAction,
+  TimeoutEffect,
+  TimeoutCharacterState,
+  UrgentIssue,
+  StrategicOption,
+  PostBattleAnalysis,
+  RelationshipChange,
+  PsychologicalConsequence,
+  TrainingRecommendation,
+  CharacterEvaluation,
+  CoachingData,
+  PsychologyFactor,
+  ActionOutcome,
+  ActionEffect
+} from '../data/battleFlow';// Import the corrected physical combat engine
+import { PhysicalBattleEngine } from './physicalBattleEngine';
+import { PostBattleAnalysisSystem, BattleMemory as PostBattleBattleMemory } from './postBattleAnalysis';
+
+export class BattleEngine {
+
+  // ============= PRE-BATTLE HUDDLE SYSTEM =============
+
+  static conductPreBattleHuddle(battle_state: BattleState): PreBattleHuddle {
+    const player_team = battle_state.teams.player;
+
+    // Phase 1: Team Assessment
+    const team_chemistryResult = this.assessTeamChemistry(player_team);
+
+    // Phase 2: Individual Character Readiness
+    const characterReadiness = player_team.characters.map(char =>
+      this.assessCharacterReadiness(char, player_team)
+    );
+
+    // Phase 3: Available Coaching Options
+    const coachingOptions = this.generateCoachingOptions(player_team, battle_state.coaching_data);
+
+    const huddle: PreBattleHuddle = {
+      phase: 'team_assessment',
+      team_chemistryCheck: team_chemistryResult,
+      character_readiness: characterReadiness,
+      coaching_options: coachingOptions,
+      huddle_outcome: {
+        final_team_morale: player_team.current_morale,
+        character_states: {},
+        strategic_advantages: [],
+        potential_problems: [],
+        ai_judge_comments: []
+      }
+    };
+
+    // Populate character states
+    characterReadiness.forEach(readiness => {
+      huddle.huddle_outcome.character_states[readiness.character_id] = readiness;
+    });
+
+    // Generate strategic insights
+    huddle.huddle_outcome.strategic_advantages = this.identifyStrategicAdvantages(player_team);
+    huddle.huddle_outcome.potential_problems = this.identifyPotentialProblems(player_team);
+    huddle.huddle_outcome.ai_judge_comments = this.generateHuddleCommentary(
+      {
+        new_chemistry: team_chemistryResult.overall_chemistry,
+        old_chemistry: 50 // Default baseline
+      },
+      characterReadiness.map(cr => ({
+        overall_readiness: (cr.mental_readiness + cr.physical_readiness) / 2,
+        character_name: cr.character_id,
+        mental_state: cr.mental_readiness,
+        physical_condition: cr.physical_readiness
+      }))
+    );
+
+    return huddle;
+  }
+
+  static assessTeamChemistry(team: { team_chemistry: number; characters: BattleCharacter[] }) {
+    const chemistry = team.team_chemistry;
+    const characters = team.characters;
+
+    const conflicts = [];
+    const synergies = [];
+    const challenges = [];
+
+    // SAFETY: Prevent recursion with visited set and depth limit
+    const visited = new Set<string>();
+    const maxDepth = 10;
+    let currentDepth = 0;
+
+    // Analyze character relationships with recursion protection
+    for (let i = 0; i < characters.length && currentDepth < maxDepth; i++) {
+      for (let j = i + 1; j < characters.length && currentDepth < maxDepth; j++) {
+        const char1 = characters[i];
+        const char2 = characters[j];
+
+        // Create unique relationship key to prevent circular analysis
+        const relationshipKey = `${char1?.character?.id || i}-${char2?.character?.id || j}`;
+        if (visited.has(relationshipKey)) {
+          continue;
+        }
+        visited.add(relationshipKey);
+        currentDepth++;
+
+        // SAFETY: Null pointer protection for relationship modifiers
+        const relationship = char1.relationship_modifiers?.find(
+          rel => rel.with_character === char2?.character?.name?.toLowerCase()?.replace(/\s+/g, '_')
+        );
+
+        if (relationship && char1?.character?.name && char2?.character?.name) {
+          if (relationship.strength < -30) {
+            conflicts.push(`${char1.character.name} vs ${char2.character.name}: ${relationship.relationship}`);
+          } else if (relationship.strength > 30) {
+            synergies.push(`${char1.character.name} + ${char2.character.name}: Strong ${relationship.relationship}`);
+          }
+        }
+      }
+    }
+
+    // Identify challenges based on mental states with null safety and loop protection
+    let challengeCount = 0;
+    const maxChallenges = 20; // Prevent infinite challenge generation
+
+    characters?.forEach((char: BattleCharacter) => {
+      if (!char?.mental_state || !char?.character?.name || challengeCount >= maxChallenges) return;
+
+      if (char.mental_state.stress > 70) {
+        challenges.push(`${char.character.name} is highly stressed (${char.mental_state.stress}%)`);
+        challengeCount++;
+      }
+      if (char.mental_state.team_trust < 40 && challengeCount < maxChallenges) {
+        challenges.push(`${char.character.name} has low team trust (${char.mental_state.team_trust}%)`);
+        challengeCount++;
+      }
+    });
+
+    return {
+      overall_chemistry: chemistry,
+      conflicting_personalities: conflicts,
+      synergistic_pairs: synergies,
+      leadership_dynamics: this.assessLeadershipDynamics(characters),
+      predicted_challenges: challenges,
+      team_mood_description: this.getTeamMoodDescription(chemistry, characters)
+    };
+  }
+
+  static assessCharacterReadiness(battleChar: BattleCharacter, team: { characters: BattleCharacter[] }) {
+    // SAFETY: Null pointer protection
+    if (!battleChar?.character || !battleChar?.mental_state) {
+      throw new Error('Invalid battle character data');
+    }
+
+    const char = battleChar.character;
+    const mental = battleChar.mental_state;
+
+    const concerns = [];
+    const motivations = [];
+
+    // Analyze concerns with null safety
+    if (mental?.stress > 60) concerns.push("High stress levels affecting focus");
+    if (mental?.current_mental_health < 50) concerns.push("Poor mental health may cause breakdowns");
+    if (mental?.team_trust < 50) concerns.push("Low trust in team/coach");
+    if (battleChar?.gameplan_adherence < 60) concerns.push("May show low gameplan adherence");
+
+    return {
+      character_id: char?.id || 'unknown',
+      mental_readiness: mental?.current_mental_health || 0,
+      physical_readiness: (battleChar?.current_health && this.getStat(battleChar, 'max_health', 100))
+        ? (battleChar.current_health / this.getStat(battleChar, 'max_health', 100)) * 100
+        : 0,
+      gameplan_adherence: battleChar?.gameplan_adherence || 0,
+      concerns,
+      motivations,
+      special_notes: this.generateSpecialNotes(battleChar)
+    };
+  }
+
+  static generateCoachingOptions(team: { characters: BattleCharacter[] }, coaching_data: CoachingData | Record<string, unknown>) {
+    const options = [];
+
+    // Always available: Motivational Speech
+    options.push({
+      id: 'motivational_speech',
+      type: 'motivational_speech' as const,
+      description: 'Rally the team with an inspiring speech',
+      target_characters: ['all'],
+      effects: [
+        { type: 'morale_boost', value: 15, duration: 'first_round', target_scope: 'team' }
+      ],
+      requirements: [],
+      risk_level: 'low' as const
+    });
+
+    // Conditional: Conflict Resolution (if conflicts exist)
+    const hasConflicts = team.characters.some((char: BattleCharacter) =>
+      char.relationship_modifiers.some((rel: { strength: number }) => rel.strength < -20)
+    );
+
+    if (hasConflicts) {
+      options.push({
+        id: 'conflict_resolution',
+        type: 'conflict_resolution' as const,
+        description: 'Address team conflicts before they escalate',
+        target_characters: ['conflicted'],
+        effects: [
+          { type: 'chemistry_improve', value: 20, duration: 'entire_battle', target_scope: 'team' }
+        ],
+        requirements: [
+          { type: 'coaching_skill', minimum_value: 60, description: 'Requires experienced coaching' }
+        ],
+        risk_level: 'medium' as const
+      });
+    }
+
+    // Conditional: Individual Coaching (for stressed characters)
+    const stressedChars = team.characters.filter((char: BattleCharacter) => char.mental_state.stress > 60);
+    if (stressedChars.length > 0) {
+      options.push({
+        id: 'stress_management',
+        type: 'confidence_boost' as const,
+        description: 'Help stressed characters manage their anxiety',
+        target_characters: stressedChars.map((char: BattleCharacter) => char.character.id),
+        effects: [
+          { type: 'stress_reduction', value: 30, duration: 'entire_battle', target_scope: 'individual' }
+        ],
+        requirements: [],
+        risk_level: 'low' as const
+      });
+    }
+
+    return options;
+  }
+
+  // ============= CORRECTED ROUND-BY-ROUND PHYSICAL COMBAT SYSTEM =============
+
+  static async executeRound(battle_state: BattleState, player_actions: Record<string, PlannedAction>): Promise<CombatRound> {
+    // Use the corrected physical combat engine
+    return await PhysicalBattleEngine.executeRound(battle_state, player_actions);
+  }
+
+  static calculateInitiative(battle_state: BattleState, player_actions: Record<string, PlannedAction>) {
+    const allCharacters = [
+      ...battle_state.teams.player.characters.map(char => ({ ...char, team: 'player' as const })),
+      ...battle_state.teams.opponent.characters.map(char => ({ ...char, team: 'opponent' as const }))
+    ];
+
+    return allCharacters
+      .filter(char => char.current_health > 0) // Only living characters
+      .map(char => {
+        const baseSpeed = this.getStat(char, 'speed', 10);
+        const mentalModifiers = this.calculateMentalSpeedModifiers(char);
+        const finalSpeed = baseSpeed + mentalModifiers;
+
+        return {
+          character_id: char.character.id,
+          team: char.team,
+          speed: finalSpeed,
+          mentalModifiers,
+          gameplan_adherence: char.gameplan_adherence,
+          planned_action: player_actions[char.character.id]
+        };
+      })
+      .sort((a, b) => b.speed - a.speed); // Highest speed first
+  }
+
+  static executeCharacterAction(
+    battle_state: BattleState,
+    initiative_entry: { character_id: string; team: 'player' | 'opponent'; speed: number; mentalModifiers: number; gameplan_adherence: number; planned_action?: PlannedAction },
+    round: CombatRound
+  ): CombatAction {
+    const character = this.findCharacter(battle_state, initiative_entry.character_id);
+    if (!character) {
+      throw new Error(`Character ${initiative_entry.character_id} not found`);
+    }
+
+    // Check gameplan adherence - will the character follow the gameplan?
+    const gameplan_adherenceCheck = this.performGameplanAdherenceCheck(character, initiative_entry.planned_action);
+
+    let actualAction: ExecutedAction;
+    let actionType: 'planned' | 'improvised' | 'panicked' | 'inspired' = 'planned';
+
+    if (gameplan_adherenceCheck.check_result === 'follows_strategy') {
+      // Character follows the plan
+      actualAction = this.executeAction(character, initiative_entry.planned_action, battle_state);
+    } else {
+      // Character goes rogue - AI determines what they do instead
+      actionType = 'improvised';
+      actualAction = this.generateRogueAction(character, gameplan_adherenceCheck, battle_state);
+    }
+
+    // Determine psychology factors that influenced this action
+    const psychologyFactors = this.analyzePsychologyFactors(character, gameplan_adherenceCheck);
+
+    // Calculate action outcome
+    const outcome = this.calculateActionOutcome(actualAction, battle_state);
+
+    return {
+      character_id: character.character.id,
+      action_type: actionType,
+      original_plan: initiative_entry.planned_action,
+      actual_action: actualAction,
+      gameplan_check: gameplan_adherenceCheck,
+      psychology_factors: psychologyFactors,
+      outcome
+    };
+  }
+
+  static performGameplanAdherenceCheck(character: BattleCharacter, planned_action?: PlannedAction): GameplanAdherenceCheck {
+    // Use the corrected physical combat engine's obedience system
+    return PhysicalBattleEngine.performGameplanAdherenceCheck(character, planned_action);
+  }
+
+  static generateRogueAction(
+    character: BattleCharacter,
+    obedience_check: GameplanAdherenceCheck,
+    battle_state: BattleState
+  ): ExecutedAction {
+    const rogueType = this.determineRogueActionType(character, obedience_check);
+
+    switch (rogueType) {
+      case 'refuses_orders':
+        return {
+          type: 'defend',
+          narrative_description: `${character.character.name} crosses their arms and refuses to act, ignoring all commands.`
+        };
+
+      case 'attacks_teammate':
+        const teammate = this.findRandomTeammate(character, battle_state);
+        return {
+          type: 'attack_teammate',
+          target_id: teammate?.character.id,
+          physical_damage: Math.floor(this.getStat(character, 'attack', 10) * 0.5),
+          narrative_description: `${character.character.name} turns on ${teammate?.character.name} in a fit of rage!`
+        };
+
+      case 'flees_battle':
+        return {
+          type: 'flee',
+          narrative_description: `${character.character.name} breaks formation and attempts to flee the battlefield!`
+        };
+
+      case 'goes_berserk':
+        return {
+          type: 'basic_attack',
+          target_id: this.findRandomEnemy(character, battle_state)?.character.id,
+          physical_damage: Math.floor(this.getStat(character, 'attack', 10) * 1.5),
+          narrative_description: `${character.character.name} enters a berserker rage, attacking wildly!`
+        };
+
+      default:
+        return {
+          type: 'defend',
+          narrative_description: `${character.character.name} seems confused and hesitates.`
+        };
+    }
+  }
+
+  // ============= COACHING TIMEOUT SYSTEM =============
+
+  static triggerCoachingTimeout(
+    battle_state: BattleState,
+    trigger_type: 'player_requested' | 'character_breakdown' | 'team_chemistry_crisis'
+  ): CoachingTimeout {
+    const urgentIssues = this.identifyUrgentIssues(battle_state);
+    const characterStates = this.assessTimeoutCharacterStates(battle_state);
+
+    return {
+      trigger_condition: {
+        type: trigger_type,
+        severity: this.assessTimeoutSeverity(urgentIssues),
+        description: this.getTimeoutDescription(trigger_type, urgentIssues),
+        time_remaining: 90 // 90 seconds
+      },
+      available_actions: this.generateTimeoutActions(battle_state, urgentIssues),
+      time_limit: 90,
+      character_states: characterStates,
+      urgent_issues: urgentIssues,
+      strategic_options: this.generateStrategicOptions(battle_state)
+    };
+  }
+
+  // ============= POST-BATTLE ANALYSIS =============
+
+  static conductPostBattleAnalysis(battle_state: BattleState): PostBattleAnalysis {
+    const battleResult = this.determineBattleResult(battle_state);
+
+    return {
+      battle_result: battleResult,
+      team_performance_metrics: this.calculateTeamMetrics(battle_state),
+      character_evaluations: this.evaluateCharacters(battle_state),
+      relationship_changes: this.calculateRelationshipChanges(battle_state),
+      psychological_consequences: this.assessPsychologicalConsequences(battle_state),
+      training_recommendations: this.generateTrainingRecommendations(battle_state),
+      team_chemistryEvolution: this.analyzeChemistryEvolution(battle_state)
+    };
+  }
+
+  // ============= UTILITY METHODS =============
+
+  static findCharacter(battle_state: BattleState, character_id: string): BattleCharacter | null {
+    const playerChar = battle_state.teams.player.characters.find(char => char.character.id === character_id);
+    if (playerChar) return playerChar;
+
+    const opponentChar = battle_state.teams.opponent.characters.find(char => char.character.id === character_id);
+    return opponentChar || null;
+  }
+
+  static calculateMentalSpeedModifiers(character: BattleCharacter): number {
+    let modifier = 0;
+
+    // Stress slows you down
+    modifier -= character.mental_state.stress * 0.2;
+
+    // Confidence speeds you up
+    modifier += (character.mental_state.confidence - 50) * 0.1;
+
+    // Battle focus affects reaction time
+    modifier += (character.mental_state.battle_focus - 50) * 0.15;
+
+    return Math.floor(modifier);
+  }
+
+  static getTeamMoodDescription(chemistry: number, characters: BattleCharacter[]): string {
+    const avgStress = characters.reduce((sum, char) => sum + char.mental_state.stress, 0) / characters.length;
+    const avgConfidence = characters.reduce((sum, char) => sum + char.mental_state.confidence, 0) / characters.length;
+
+    if (chemistry > 80 && avgStress < 30) return "United and confident - ready for anything";
+    if (chemistry > 60 && avgConfidence > 70) return "Optimistic with good team spirit";
+    if (chemistry < 40 || avgStress > 70) return "Tense and fractured - potential for chaos";
+    if (avgConfidence < 40) return "Demoralized and lacking confidence";
+    return "Mixed emotions with uncertain dynamics";
+  }
+
+  static assessLeadershipDynamics(characters: BattleCharacter[]): string {
+    // SAFETY: Recursion protection with array limits
+    if (!characters || characters.length === 0) return "No characters available";
+    if (characters.length > 50) {
+      console.warn('Too many characters for leadership analysis, limiting to first 50');
+      characters = characters.slice(0, 50);
+    }
+
+    const leaders = characters.filter(char =>
+      char?.character?.archetype === 'support' ||
+      (char?.character?.personality_traits || []).includes('Charismatic')
+    );
+
+    if (leaders.length === 0) return "No clear leadership - team may lack direction";
+    if (leaders.length === 1) return `${leaders[0]?.character?.name || 'Unknown'} is the natural leader`;
+
+    // Limit displayed leaders to prevent UI overflow
+    const displayLeaders = leaders.slice(0, 5);
+    const leaderNames = displayLeaders.map((l: BattleCharacter) => l?.character?.name || 'Unknown').join(' and ');
+    return `Leadership conflict between ${leaderNames}${leaders.length > 5 ? ' and others' : ''}`;
+  }
+
+  static generateSpecialNotes(battleChar: BattleCharacter): string[] {
+    const notes = [];
+    const char = battleChar.character;
+
+    // Personality-based notes
+    const traits = char.personality_traits || [];
+    if (traits.includes('Prideful')) {
+      notes.push("Pride may prevent them from retreating or asking for help");
+    }
+    if (traits.includes('Loyal')) {
+      notes.push("Will sacrifice themselves to protect teammates");
+    }
+    if (traits.includes('Unpredictable')) {
+      notes.push("May ignore strategy in favor of creative solutions");
+    }
+
+    // Fear-based notes (removed as property doesn't exist)
+    // char.personality.fears.forEach(fear => {
+    //   if (fear.toLowerCase().includes('death')) {
+    //     notes.push("Fear of death may cause hesitation in critical moments");
+    //   }
+    //   if (fear.toLowerCase().includes('failure')) {
+    //     notes.push("Fear of failure may lead to overcautious play");
+    //   }
+    // });
+
+    return notes;
+  }
+
+  // Additional utility methods would be implemented here...
+  // (Keeping this focused on the core battle flow for brevity)
+
+  private static determineRogueActionType(character: BattleCharacter, obedience_check: GameplanAdherenceCheck): string {
+    // Simplified logic - in full implementation this would be much more complex
+    if (character.mental_state.stress > 80) return 'flees_battle';
+    if (character.mental_state.current_mental_health < 30) return 'goes_berserk';
+    if (obedience_check.check_result === 'goes_rogue') return 'attacks_teammate';
+    return 'refuses_orders';
+  }
+
+  private static findRandomTeammate(character: BattleCharacter, battle_state: BattleState): BattleCharacter | null {
+    const team = battle_state.teams.player.characters.includes(character)
+      ? battle_state.teams.player
+      : battle_state.teams.opponent;
+
+    const teammates = team.characters.filter(char =>
+      char.character.id !== character.character.id && char.current_health > 0
+    );
+
+    return teammates.length > 0 ? teammates[Math.floor(Math.random() * teammates.length)] : null;
+  }
+
+  private static findRandomEnemy(character: BattleCharacter, battle_state: BattleState): BattleCharacter | null {
+    const enemyTeam = battle_state.teams.player.characters.includes(character)
+      ? battle_state.teams.opponent
+      : battle_state.teams.player;
+
+    const enemies = enemyTeam.characters.filter(char => char.current_health > 0);
+    return enemies.length > 0 ? enemies[Math.floor(Math.random() * enemies.length)] : null;
+  }
+
+  private static executeAction(character: BattleCharacter, planned_action: PlannedAction | undefined, battle_state: BattleState): ExecutedAction {
+    if (!planned_action) {
+      return {
+        type: 'basic_attack',
+        narrative_description: `${character.character.name} performs a basic attack.`
+      };
+    }
+
+    // Convert planned action to executed action based on action type
+    switch (planned_action.type) {
+      case 'ability':
+        return {
+          type: 'ability',
+          ability_id: planned_action.ability_id,
+          target_id: planned_action.target_id,
+          narrative_description: `${character.character.name} uses ${planned_action.ability_id} on ${planned_action.target_id}.`
+        };
+      case 'basic_attack':
+        return {
+          type: 'basic_attack',
+          target_id: planned_action.target_id,
+          narrative_description: `${character.character.name} attacks ${planned_action.target_id}.`
+        };
+      case 'defend':
+        return {
+          type: 'defend',
+          narrative_description: `${character.character.name} takes a defensive stance.`
+        };
+      default:
+        return {
+          type: 'basic_attack',
+          narrative_description: `${character.character.name} performs a basic attack.`
+        };
+    }
+  }
+
+  private static analyzePsychologyFactors(character: BattleCharacter, gameplan_adherenceCheck: GameplanAdherenceCheck): PsychologyFactor[] {
+    const factors: PsychologyFactor[] = [];
+
+    // Mental health factors
+    if (character.mental_state.current_mental_health < 50) {
+      factors.push({
+        factor: 'mental_health',
+        impact: 'negative',
+        value: 50 - character.mental_state.current_mental_health,
+        description: 'Low mental health affecting decision-making'
+      });
+    }
+
+    // Stress factors
+    if (character.mental_state.stress > 70) {
+      factors.push({
+        factor: 'stress',
+        impact: 'negative',
+        value: character.mental_state.stress,
+        description: 'High stress levels causing erratic behavior'
+      });
+    }
+
+    // Confidence factors
+    if (character.mental_state.confidence < 40) {
+      factors.push({
+        factor: 'confidence',
+        impact: 'negative',
+        value: 40 - character.mental_state.confidence,
+        description: 'Low confidence leading to hesitation'
+      });
+    }
+
+    // Gameplan adherence factors
+    if (character.gameplan_adherence < 50) {
+      factors.push({
+        factor: 'relationship',
+        impact: 'negative',
+        value: 50 - character.gameplan_adherence,
+        description: 'Poor gameplan adherence tendency'
+      });
+    }
+
+    // Team trust factors
+    if (character.mental_state.team_trust < 60) {
+      factors.push({
+        factor: 'team_chemistry',
+        impact: 'negative',
+        value: 60 - character.mental_state.team_trust,
+        description: 'Low team trust affecting cooperation'
+      });
+    }
+
+    return factors;
+  }
+
+  private static calculateActionOutcome(actualAction: ExecutedAction, battle_state: BattleState): ActionOutcome {
+    // Base success rate varies by action type
+    let success_rate = 0.8;
+
+    switch (actualAction.type) {
+      case 'basic_attack':
+        success_rate = 0.85;
+        break;
+      case 'ability':
+        success_rate = 0.75; // Abilities are more complex, lower base success
+        break;
+      case 'defend':
+        success_rate = 0.95; // Defensive actions rarely fail
+        break;
+      default:
+        success_rate = 0.8;
+    }
+
+    const success = Math.random() < success_rate;
+
+    return {
+      success,
+      effects: success ? [
+        {
+          type: 'special',
+          value: 1,
+          target_id: actualAction.target_id || 'unknown',
+          description: 'Action completed'
+        }
+      ] : [
+        {
+          type: 'special',
+          value: 0,
+          target_id: actualAction.target_id || 'unknown',
+          description: 'Action failed'
+        }
+      ],
+      narrative_description: success ?
+        actualAction.narrative_description :
+        actualAction.narrative_description.replace('attacks', 'misses').replace('uses', 'fails to use'),
+      audience_reaction: success ?
+        "The crowd cheers!" :
+        "The crowd groans in disappointment..."
+    };
+  }
+
+  private static async applyActionOutcome(action: CombatAction, battle_state: BattleState): Promise<void> {
+    // SAFETY: Use state manager to prevent race conditions on damage application
+    const stateManager = BattleStateManager.getInstance(battle_state.id || 'default');
+
+    await stateManager.executeOperation(
+      (state: BattleState) => {
+        // Find the character who performed the action
+        const actor = state.teams.player.characters.find(c => c.character.id === action.character_id) ||
+          state.teams.opponent.characters.find(c => c.character.id === action.character_id);
+
+        if (!actor || !action.outcome?.success) return;
+
+        // Apply effects based on action type
+        if (action.actual_action.type === 'basic_attack' || action.actual_action.type === 'ability') {
+          const target_id = action.actual_action.target_id;
+          if (!target_id) return;
+
+          // Find target
+          const target = state.teams.player.characters.find(c => c.character.id === target_id) ||
+            state.teams.opponent.characters.find(c => c.character.id === target_id);
+
+          if (target) {
+            // Calculate and apply damage (simplified for now)
+            const baseDamage = this.getStat(actor, 'attack', 10);
+            const defense = this.getStat(target, 'defense', 0);
+            const damage = Math.max(1, baseDamage - defense);
+
+            target.current_health = Math.max(0, target.current_health - damage);
+            target.physical_damage_taken = (target.physical_damage_taken || 0) + damage;
+            actor.physical_damage_dealt = (actor.physical_damage_dealt || 0) + damage;
+
+            // Play appropriate sound effect
+            this.playActionSoundEffect(action, actor, target, damage);
+          }
+        }
+
+        return true;
+      },
+      // Rollback function
+      (state: BattleState) => {
+        console.warn('Rolling back action outcome application');
+        // In production, we'd restore previous character states
+      }
+    );
+  }
+
+  private static checkForMoraleEvents(action: CombatAction, battle_state: BattleState): MoraleEvent[] {
+    const events: MoraleEvent[] = [];
+
+    // Check for critical morale events
+    if (action.action_type === 'panicked') {
+      events.push({
+        event_type: 'betrayal',
+        description: `${action.character_id}'s panic affects nearby allies`,
+        morale_impact: -10,
+        affected_team: 'player',
+        cascade_effects: [{
+          type: 'panic',
+          character_ids: battle_state.teams.player.characters.map(c => c.character.id),
+          stat_modifiers: { confidence: -5 },
+          behavior_changes: ['increased_hesitation']
+        }]
+      });
+    }
+
+    if (action.outcome?.success && action.actual_action.type === 'ability') {
+      events.push({
+        event_type: 'heroic_save',
+        description: `${action.character_id}'s successful special move inspires the team`,
+        morale_impact: 5,
+        affected_team: 'player',
+        cascade_effects: [{
+          type: 'inspiration',
+          character_ids: battle_state.teams.player.characters.map(c => c.character.id),
+          stat_modifiers: { confidence: 5 },
+          behavior_changes: ['increased_motivation']
+        }]
+      });
+    }
+
+    return events;
+  }
+
+  private static updateTeamMorale(battle_state: BattleState, round: CombatRound): MoraleEvent[] {
+    const moraleEvents: MoraleEvent[] = [];
+
+    // Calculate morale changes based on round performance
+    let morale_change = 0;
+
+    // Check for successful actions
+    const successfulActions = round.actions.filter(action => action.outcome?.success);
+    const totalActions = round.actions.length;
+    const success_rate = successfulActions.length / Math.max(1, totalActions);
+
+    if (success_rate > 0.8) {
+      morale_change += 10;
+      moraleEvents.push({
+        event_type: 'victory',
+        description: 'Team performed excellently this round!',
+        morale_impact: 10,
+        affected_team: 'player',
+        cascade_effects: [{
+          type: 'inspiration',
+          character_ids: battle_state.teams.player.characters.map(c => c.character.id),
+          stat_modifiers: { confidence: 10 },
+          behavior_changes: ['increased_focus']
+        }]
+      });
+    } else if (success_rate < 0.3) {
+      morale_change -= 15;
+      moraleEvents.push({
+        event_type: 'defeat',
+        description: 'Team struggled with their actions this round...',
+        morale_impact: -15,
+        affected_team: 'player',
+        cascade_effects: [{
+          type: 'demoralization',
+          character_ids: battle_state.teams.player.characters.map(c => c.character.id),
+          stat_modifiers: { confidence: -10 },
+          behavior_changes: ['decreased_coordination']
+        }]
+      });
+    }
+
+    // Check for characters taking heavy damage
+    const heavilyDamaged = battle_state.teams.player.characters.filter(
+      c => c.current_health < this.getStat(c, 'max_health', 100) * 0.3
+    );
+    if (heavilyDamaged.length > 0) {
+      morale_change -= heavilyDamaged.length * 5;
+      moraleEvents.push({
+        event_type: 'ally_down',
+        description: `Team morale drops seeing ${heavilyDamaged[0].character.name} badly injured`,
+        morale_impact: -heavilyDamaged.length * 5,
+        affected_team: 'player',
+        cascade_effects: [{
+          type: 'demoralization',
+          character_ids: battle_state.teams.player.characters.map(c => c.character.id),
+          stat_modifiers: { stress: 10 },
+          behavior_changes: ['protective_instincts']
+        }]
+      });
+    }
+
+    // SAFETY: Apply morale change with bounds checking and race condition protection
+    const current_morale = battle_state.teams.player.current_morale || 50;
+    battle_state.teams.player.current_morale = Math.max(0, Math.min(100, current_morale + morale_change));
+
+    return moraleEvents;
+  }
+
+  private static determineRoundOutcome(battle_state: BattleState, round: CombatRound): {
+    winner: string;
+    key_events: string[];
+    morale_shift: Record<string, number>;
+    strategic_advantages: string[];
+    unexpected_developments: string[];
+    judge_commentary: string;
+  } {
+    return {
+      winner: 'draw',
+      key_events: [],
+      morale_shift: {},
+      strategic_advantages: [],
+      unexpected_developments: [],
+      judge_commentary: ''
+    };
+  }
+
+  private static generateJudgeCommentary(round: CombatRound, battle_state: BattleState): string {
+    return "An interesting round unfolds...";
+  }
+
+  private static handleRogueAction(action: CombatAction, battle_state: BattleState): RogueAction {
+    return {
+      character_id: action.character_id,
+      trigger_reason: 'low_mental_health',
+      rogue_type: 'ignores_strategy',
+      severity: 'minor',
+      consequences: [],
+      ai_judge_ruling: "The character's deviation from gameplan creates chaos on the battlefield."
+    };
+  }
+
+  // Additional placeholder methods...
+  private static identifyStrategicAdvantages(team: { characters: BattleCharacter[] }): string[] {
+    const advantages: string[] = [];
+
+    // Check team composition advantages
+    const archetypes = team.characters.map(c => c.character.archetype);
+    if (archetypes.includes('warrior') && archetypes.includes('support')) {
+      advantages.push('Balanced frontline and support composition');
+    }
+
+    // Check health advantage
+    const avgHealth = team.characters.reduce((sum, c) => sum + c.current_health, 0) / team.characters.length;
+    const max_health = team.characters.reduce((sum, c) => sum + this.getStat(c, 'max_health', 100), 0) / team.characters.length;
+    if (avgHealth / max_health > 0.9) {
+      advantages.push('Team at full strength');
+    }
+
+    // Check morale advantage
+    const avgMorale = team.characters.reduce((sum, c) => sum + c.mental_state.current_mental_health, 0) / team.characters.length;
+    if (avgMorale > 80) {
+      advantages.push('High team morale');
+    }
+
+    // Check gameplan adherence
+    const avgAdherence = team.characters.reduce((sum, c) => sum + c.gameplan_adherence, 0) / team.characters.length;
+    if (avgAdherence > 75) {
+      advantages.push('Strong strategic discipline');
+    }
+
+    return advantages;
+  }
+  private static identifyPotentialProblems(team: { characters: BattleCharacter[] }): string[] {
+    const problems: string[] = [];
+
+    // Check for low mental health
+    const lowMentalHealth = team.characters.filter(c => c.mental_state.current_mental_health < 40);
+    if (lowMentalHealth.length > 0) {
+      problems.push(`${lowMentalHealth.length} character(s) with critical mental health issues`);
+    }
+
+    // Check for high stress
+    const highStress = team.characters.filter(c => c.mental_state.stress > 70);
+    if (highStress.length > 0) {
+      problems.push(`${highStress.length} character(s) experiencing extreme stress`);
+    }
+
+    // Check for low gameplan adherence
+    const lowAdherence = team.characters.filter(c => c.gameplan_adherence < 50);
+    if (lowAdherence.length > 0) {
+      problems.push(`${lowAdherence.length} character(s) likely to ignore strategy`);
+    }
+
+    // Check for team trust issues
+    const lowTrust = team.characters.filter(c => c.mental_state.team_trust < 40);
+    if (lowTrust.length > 0) {
+      problems.push('Low team cohesion - trust issues detected');
+    }
+
+    // Check for injured characters
+    const injured = team.characters.filter(c => c.current_health < this.getStat(c, 'max_health', 100) * 0.5);
+    if (injured.length > 0) {
+      problems.push(`${injured.length} character(s) severely injured`);
+    }
+
+    return problems;
+  }
+  private static generateHuddleCommentary(chemistry: { new_chemistry: number; old_chemistry: number }, readiness: Array<{ overall_readiness: number; character_name: string; mental_state: number; physical_condition: number }>): string[] {
+    const commentary: string[] = [];
+
+    // Analyze team chemistry
+    if (chemistry.new_chemistry > chemistry.old_chemistry + 10) {
+      commentary.push('Team chemistry has improved significantly during preparation');
+      commentary.push('Players are showing better coordination and trust');
+    } else if (chemistry.new_chemistry < chemistry.old_chemistry - 10) {
+      commentary.push('Team chemistry has deteriorated - tension is visible');
+      commentary.push('Internal conflicts may impact battle performance');
+    }
+
+    // Analyze character readiness
+    const lowReadiness = readiness.filter(r => r.overall_readiness < 60);
+    const highReadiness = readiness.filter(r => r.overall_readiness > 80);
+
+    if (lowReadiness.length > 0) {
+      commentary.push(`${lowReadiness.length} team member(s) showing concerning readiness levels`);
+      lowReadiness.forEach(r => {
+        if (r.mental_state < 40) {
+          commentary.push(`${r.character_name} appears mentally unprepared for battle`);
+        }
+        if (r.physical_condition < 50) {
+          commentary.push(`${r.character_name} may be physically compromised`);
+        }
+      });
+    }
+
+    if (highReadiness.length > 0) {
+      commentary.push(`${highReadiness.length} team member(s) showing excellent battle readiness`);
+    }
+
+    // Overall team assessment
+    const avgReadiness = readiness.reduce((sum, r) => sum + r.overall_readiness, 0) / readiness.length;
+    if (avgReadiness > 75) {
+      commentary.push('Overall team readiness is excellent - strong chance of success');
+    } else if (avgReadiness < 50) {
+      commentary.push('Team readiness is concerning - high risk of poor performance');
+    } else {
+      commentary.push('Team readiness is adequate but improvements could be made');
+    }
+
+    return commentary;
+  }
+  private static identifyUrgentIssues(battle_state: BattleState): UrgentIssue[] {
+    const issues: UrgentIssue[] = [];
+
+    battle_state.teams.player.characters.forEach(char => {
+      // Mental health crisis
+      if (char.mental_state.current_mental_health < 20) {
+        issues.push({
+          type: 'character_breakdown',
+          severity: 'critical',
+          description: `${char.character.name} is experiencing severe mental breakdown`,
+          immediate_actions: ['emergency_counseling', 'team_support', 'medical_attention'],
+          consequences_if_ignored: ['Complete psychological collapse', 'Potential harm to teammates', 'Mission failure']
+        });
+      }
+
+      // Extreme stress
+      if (char.mental_state.stress > 90) {
+        issues.push({
+          type: 'character_breakdown',
+          severity: 'urgent',
+          description: `${char.character.name} is under extreme stress`,
+          immediate_actions: ['stress_management', 'breathing_exercises', 'timeout'],
+          consequences_if_ignored: ['Panic attacks', 'Unpredictable behavior', 'Frozen in combat']
+        });
+      }
+
+      // Trust breakdown
+      if (char.mental_state.team_trust < 20) {
+        issues.push({
+          type: 'team_conflict',
+          severity: 'urgent',
+          description: `${char.character.name} has lost faith in the team`,
+          immediate_actions: ['team_building', 'trust_exercises', 'mediation'],
+          consequences_if_ignored: ['Team abandonment', 'Refusal to cooperate', 'Active sabotage']
+        });
+      }
+
+      // Critical injury
+      if (char.current_health < char.character.max_health * 0.15) {
+        issues.push({
+          type: 'character_breakdown',
+          severity: 'critical',
+          description: `${char.character.name} is critically injured`,
+          immediate_actions: ['medical_treatment', 'pain_management', 'evacuation'],
+          consequences_if_ignored: ['Character death', 'Permanent disability', 'Team morale collapse']
+        });
+      }
+    });
+
+    // Team-wide issues
+    const avgChemistry = battle_state.teams.player.team_chemistry;
+    if (avgChemistry < 30) {
+      issues.push({
+        type: 'morale_collapse',
+        severity: 'critical',
+        description: 'Team chemistry has collapsed',
+        immediate_actions: ['emergency_team_meeting', 'conflict_resolution', 'leadership_intervention'],
+        consequences_if_ignored: ['Complete team breakdown', 'Internal fighting', 'Mission abandonment']
+      });
+    }
+
+    return issues;
+  }
+  private static assessTimeoutSeverity(issues: Array<{ severity: string }>): 'minor' | 'moderate' | 'critical' { return 'minor'; }
+  private static getTimeoutDescription(type: string, issues: Array<{ type: string; description: string }>): string {
+    switch (type) {
+      case 'mental_health_crisis':
+        return 'Multiple team members are experiencing severe psychological distress. Immediate intervention required.';
+      case 'team_conflict':
+        return 'Internal conflicts are tearing the team apart. Relationships need immediate attention.';
+      case 'strategic_confusion':
+        return 'The team has lost focus on the gameplan. Strategic realignment needed.';
+      case 'morale_collapse':
+        return 'Team morale has collapsed. Motivational support urgently required.';
+      default:
+        return 'The team needs coaching support to address emerging issues.';
+    }
+  }
+  private static generateTimeoutActions(battle_state: BattleState, issues: UrgentIssue[]): TimeoutAction[] {
+    const actions: TimeoutAction[] = [];
+
+    // Always available basic actions
+    actions.push({
+      id: 'motivational_speech',
+      type: 'team_rallying',
+      description: 'Rally the team with an inspirational speech',
+      target_characters: battle_state.teams.player.characters.map(char => char.character.id),
+      effects: [{
+        type: 'mental_health_restore',
+        value: 10,
+        duration: 'next_round',
+        description: 'Boost team morale and confidence'
+      }],
+      requirements: ['team_attention'],
+      success_chance: 85,
+      time_consumed: 2
+    });
+
+    actions.push({
+      id: 'strategic_reminder',
+      type: 'strategic_pivot',
+      description: 'Remind team of the battle plan and key objectives',
+      target_characters: battle_state.teams.player.characters.map(char => char.character.id),
+      effects: [{
+        type: 'gameplan_adherence_boost',
+        value: 15,
+        duration: 'next_round',
+        description: 'Improve gameplan adherence'
+      }],
+      requirements: ['clear_communication'],
+      success_chance: 90,
+      time_consumed: 1
+    });
+
+    // Issue-specific actions
+    issues.forEach(issue => {
+      switch (issue.type) {
+        case 'character_breakdown':
+          actions.push({
+            id: `emergency_counseling_${Date.now()}`,
+            type: 'individual_coaching',
+            description: `Provide immediate psychological support`,
+            target_characters: battle_state.teams.player.characters.map(c => c.character.id),
+            effects: [{
+              type: 'mental_health_restore',
+              value: 20,
+              duration: 'immediate',
+              description: 'Stabilize mental health temporarily'
+            }],
+            requirements: ['counseling_training'],
+            success_chance: 75,
+            time_consumed: 3
+          });
+          break;
+
+        case 'team_conflict':
+          actions.push({
+            id: `conflict_mediation_${Date.now()}`,
+            type: 'conflict_mediation',
+            description: `Address team conflicts and trust issues`,
+            target_characters: battle_state.teams.player.characters.map(c => c.character.id),
+            effects: [{
+              type: 'chemistry_repair',
+              value: 10,
+              duration: 'rest_of_battle',
+              description: 'Rebuild team trust and cooperation'
+            }],
+            requirements: ['team_cooperation'],
+            success_chance: 65,
+            time_consumed: 4
+          });
+          break;
+
+        case 'strategy_failing':
+          actions.push({
+            id: `strategy_pivot_${Date.now()}`,
+            type: 'strategic_pivot',
+            description: `Adjust battle strategy based on current conditions`,
+            target_characters: battle_state.teams.player.characters.map(c => c.character.id),
+            effects: [{
+              type: 'strategy_adjustment',
+              value: 25,
+              duration: 'rest_of_battle',
+              description: 'Improve tactical effectiveness'
+            }],
+            requirements: ['strategic_knowledge'],
+            success_chance: 80,
+            time_consumed: 3
+          });
+          break;
+
+        case 'morale_collapse':
+          actions.push({
+            id: `team_rallying_${Date.now()}`,
+            type: 'team_rallying',
+            description: `Rally the team and restore morale`,
+            target_characters: battle_state.teams.player.characters.map(c => c.character.id),
+            effects: [{
+              type: 'mental_health_restore',
+              value: 15,
+              duration: 'rest_of_battle',
+              description: 'Boost team morale and fighting spirit'
+            }],
+            requirements: ['leadership_presence'],
+            success_chance: 70,
+            time_consumed: 2
+          });
+          break;
+      }
+    });
+
+    return actions;
+  }
+  private static assessTimeoutCharacterStates(battle_state: BattleState): TimeoutCharacterState[] {
+    return battle_state.teams.player.characters.map(char => ({
+      character_id: char.character.id,
+      current_issues: ['stress', 'fatigue'],
+      coaching_needs: ['motivation', 'strategy_clarification'],
+      receptiveness: 75,
+      quick_fix_options: [{
+        action: 'quick_pep_talk',
+        effect: 'minor_morale_boost',
+        success_chance: 80,
+        risk_level: 'low'
+      }],
+      deep_issues: ['trust_issues', 'confidence_problems']
+    }));
+  }
+  private static generateStrategicOptions(battle_state: BattleState): StrategicOption[] {
+    return [
+      {
+        id: 'aggressive_push',
+        name: 'Aggressive Push',
+        description: 'Focus on offensive tactics and overwhelming force',
+        pros: ['Higher damage potential', 'Quick victory possible', 'Intimidates opponents'],
+        cons: ['Higher risk of casualties', 'Drains energy faster', 'Vulnerable to counters'],
+        character_reactions: {},
+        implementation_difficulty: 60
+      },
+      {
+        id: 'defensive_stance',
+        name: 'Defensive Stance',
+        description: 'Prioritize protection and careful positioning',
+        pros: ['Reduced casualties', 'Better energy management', 'Safer approach'],
+        cons: ['Slower progress', 'May allow enemy to regroup', 'Lower morale impact'],
+        character_reactions: {},
+        implementation_difficulty: 40
+      },
+      {
+        id: 'tactical_retreat',
+        name: 'Tactical Retreat',
+        description: 'Strategic withdrawal to better positions',
+        pros: ['Preserve team strength', 'Regroup and heal', 'Avoid unfavorable battle'],
+        cons: ['Loss of ground', 'Potential morale hit', 'Enemy may pursue'],
+        character_reactions: {},
+        implementation_difficulty: 30
+      }
+    ];
+  }
+  private static determineBattleResult(battle_state: BattleState): 'victory' | 'defeat' | 'draw' {
+    const playerAlive = battle_state.teams.player.characters.some(c => c.current_health > 0);
+    const opponentAlive = battle_state.teams.opponent.characters.some(c => c.current_health > 0);
+
+    if (playerAlive && !opponentAlive) return 'victory';
+    if (!playerAlive && opponentAlive) return 'defeat';
+    return 'draw';
+  }
+  private static calculateTeamMetrics(battle_state: BattleState): {
+    overall_teamwork: number;
+    gameplan_adherence: number;
+    strategic_execution: number;
+    morale_management: number;
+    conflict_resolution: number;
+    adaptability: number;
+  } {
+    const team = battle_state.teams.player;
+    const chars = team.characters;
+
+    // Calculate averages
+    const avgGameplanAdherence = chars.reduce((sum, char) => {
+      const adherenceRate = char.battle_performance.abilities_used > 0
+        ? (char.battle_performance.abilities_used - char.battle_performance.strategy_deviations) / char.battle_performance.abilities_used * 100
+        : char.gameplan_adherence;
+      return sum + adherenceRate;
+    }, 0) / chars.length;
+
+    const avgTeamwork = chars.reduce((sum, char) => {
+      const teamworkScore = Math.min(100, char.battle_performance.teamplay_actions * 10 + 30);
+      return sum + teamworkScore;
+    }, 0) / chars.length;
+
+    const avgEffectiveness = chars.reduce((sum, char) => {
+      const hitRate = char.battle_performance.abilities_used > 0
+        ? char.battle_performance.successful_hits / char.battle_performance.abilities_used
+        : 0.5;
+      const healthRate = char.current_health / this.getStat(char, 'max_health', 100);
+      return sum + ((hitRate * 50) + (healthRate * 50));
+    }, 0) / chars.length;
+
+    // Calculate specific metrics
+    const moraleManagement = team.current_morale;
+    const conflictResolution = this.calculateConflictResolution(chars);
+    const adaptability = this.calculateAdaptability(chars);
+
+    return {
+      overall_teamwork: Math.floor(avgTeamwork),
+      gameplan_adherence: Math.floor(avgGameplanAdherence),
+      strategic_execution: Math.floor(avgEffectiveness),
+      morale_management: moraleManagement,
+      conflict_resolution: conflictResolution,
+      adaptability
+    };
+  }
+  private static evaluateCharacters(battle_state: BattleState): CharacterEvaluation[] {
+    // Delegate to post-battle analysis system for proper character evaluation
+    const memories = this.collectBasicBattleMemories(battle_state);
+    return PostBattleAnalysisSystem.evaluateCharacterPerformances(battle_state, memories);
+  }
+  private static calculateRelationshipChanges(battle_state: BattleState): RelationshipChange[] {
+    // Delegate to the post-battle analysis system for proper relationship calculation
+    const memories = this.collectBasicBattleMemories(battle_state);
+    return PostBattleAnalysisSystem.calculateRelationshipEvolution(battle_state, memories);
+  }
+
+  private static collectBasicBattleMemories(battle_state: BattleState): Record<string, PostBattleBattleMemory> {
+    const memories: Record<string, PostBattleBattleMemory> = {};
+
+    battle_state.teams.player.characters.forEach(char => {
+      memories[char.character.id] = {
+        character_id: char.character.id,
+        notable_events: [],
+        emotional_impact: 0,
+        relationship_moments: [],
+        personal_growth: [],
+        trauma: []
+      };
+    });
+
+    return memories;
+  }
+  private static assessPsychologicalConsequences(battle_state: BattleState): PsychologicalConsequence[] {
+    const consequences: PsychologicalConsequence[] = [];
+
+    battle_state.teams.player.characters.forEach(char => {
+      // Check for trauma-inducing events
+      if (char.current_health < this.getStat(char, 'max_health', 100) * 0.2) {
+        consequences.push({
+          character_id: char.character.id,
+          type: 'trauma',
+          severity: 'significant',
+          description: `${char.character.name} suffered severe injuries and may develop combat anxiety`,
+          long_term_effects: ['combat_anxiety', 'reduced_aggression', 'trust_issues'],
+          recovery_time: 5,
+          treatment_options: ['therapy', 'gradual_exposure', 'team_support']
+        });
+      }
+
+      // Check for strategy breakdown trauma
+      if (char.battle_performance.strategy_deviations > 5) {
+        consequences.push({
+          character_id: char.character.id,
+          type: 'resentment',
+          severity: 'moderate',
+          description: `${char.character.name} repeatedly ignored orders and may have trust issues with leadership`,
+          long_term_effects: ['authority_distrust', 'increased_independence', 'strategic_resistance'],
+          recovery_time: 3,
+          treatment_options: ['trust_building', 'autonomy_coaching', 'clear_communication']
+        });
+      }
+
+      // Check for positive growth
+      if (char.battle_performance.successful_hits > 8 && char.battle_performance.teamplay_actions > 3) {
+        consequences.push({
+          character_id: char.character.id,
+          type: 'inspiration',
+          severity: 'minor',
+          description: `${char.character.name} performed excellently and gained confidence in their abilities`,
+          long_term_effects: ['increased_confidence', 'leadership_potential', 'improved_teamwork'],
+          recovery_time: 0,
+          treatment_options: []
+        });
+      }
+    });
+
+    return consequences;
+  }
+  private static generateTrainingRecommendations(battle_state: BattleState): TrainingRecommendation[] {
+    const recommendations: TrainingRecommendation[] = [];
+
+    battle_state.teams.player.characters.forEach(char => {
+      // Accuracy training for poor performers
+      const hitRate = char.battle_performance.successful_hits / Math.max(1, char.battle_performance.abilities_used);
+      if (hitRate < 0.5) {
+        recommendations.push({
+          character_id: char.character.id,
+          type: 'combat_skills',
+          priority: 'high',
+          description: `${char.character.name} needs accuracy training - hit rate was only ${Math.round(hitRate * 100)}%`,
+          expected_benefit: 'Improved accuracy and hit rate in combat',
+          time_required: 3
+        });
+      }
+
+      // Gameplan adherence training
+      if (char.battle_performance.strategy_deviations > 2) {
+        recommendations.push({
+          character_id: char.character.id,
+          type: 'strategy_focus',
+          priority: 'medium',
+          description: `${char.character.name} frequently ignored orders - needs discipline training`,
+          expected_benefit: 'Improved tactical awareness and order following',
+          time_required: 2
+        });
+      }
+
+      // Mental health support
+      if (char.mental_state.current_mental_health < 50) {
+        recommendations.push({
+          character_id: char.character.id,
+          type: 'mental_health',
+          priority: 'high',
+          description: `${char.character.name} needs psychological support to recover from battle stress`,
+          expected_benefit: 'Reduced stress and improved mental health',
+          time_required: 7
+        });
+      }
+
+      // Team chemistry training
+      if (char.battle_performance.teamplay_actions < 2) {
+        recommendations.push({
+          character_id: char.character.id,
+          type: 'team_chemistry',
+          priority: 'medium',
+          description: `${char.character.name} needs team cooperation training`,
+          expected_benefit: 'Enhanced team coordination and trust',
+          time_required: 2
+        });
+      }
+    });
+
+    return recommendations;
+  }
+  private static analyzeChemistryEvolution(battle_state: BattleState): {
+    old_chemistry: number;
+    new_chemistry: number;
+    evolution_factors: string[];
+    emerging_dynamics: string[];
+    strengthened_bonds: string[];
+    weakened_bonds: string[];
+    culture_shift: string;
+  } {
+    const team = battle_state.teams.player;
+    const oldChemistry = team.team_chemistry;
+
+    // Calculate new chemistry based on current conditions
+    let chemistryDelta = 0;
+    const evolution_factors: string[] = [];
+
+    // Positive factors
+    const avgTeamplay = team.characters.reduce((sum, char) => sum + char.battle_performance.teamplay_actions, 0) / team.characters.length;
+    if (avgTeamplay > 3) {
+      chemistryDelta += 5;
+      evolution_factors.push('Strong teamwork displayed during battle');
+    }
+
+    const lowStressCount = team.characters.filter(char => char.mental_state.stress < 50).length;
+    if (lowStressCount > team.characters.length / 2) {
+      chemistryDelta += 3;
+      evolution_factors.push('Team managing stress well');
+    }
+
+    // Negative factors
+    const highDeviations = team.characters.filter(char => char.battle_performance.strategy_deviations > 2).length;
+    if (highDeviations > 0) {
+      chemistryDelta -= highDeviations * 2;
+      evolution_factors.push('Strategy deviations causing team friction');
+    }
+
+    const lowTrust = team.characters.filter(char => char.mental_state.team_trust < 40).length;
+    if (lowTrust > 0) {
+      chemistryDelta -= lowTrust * 3;
+      evolution_factors.push('Trust issues undermining team unity');
+    }
+
+    const newChemistry = Math.max(0, Math.min(100, oldChemistry + chemistryDelta));
+
+    return {
+      old_chemistry: oldChemistry,
+      new_chemistry: newChemistry,
+      evolution_factors: evolution_factors,
+      emerging_dynamics: this.identifyEmergingDynamics(team),
+      strengthened_bonds: this.identifyStrengthenedBonds(team),
+      weakened_bonds: this.identifyWeakenedBonds(team),
+      culture_shift: this.calculateCultureShift(oldChemistry, newChemistry, evolution_factors)
+    };
+  }
+
+  private static calculateConflictResolution(characters: BattleCharacter[]): number {
+    // Base score
+    let score = 50;
+
+    // Good factors
+    const lowConflictChars = characters.filter(char => char.mental_state.team_trust > 60).length;
+    score += (lowConflictChars / characters.length) * 30;
+
+    const cooperativeChars = characters.filter(char => char.battle_performance.teamplay_actions > 2).length;
+    score += (cooperativeChars / characters.length) * 20;
+
+    // Bad factors
+    const highStressChars = characters.filter(char => char.mental_state.stress > 70).length;
+    score -= (highStressChars / characters.length) * 25;
+
+    return Math.max(0, Math.min(100, Math.floor(score)));
+  }
+
+  private static calculateAdaptability(characters: BattleCharacter[]): number {
+    // Base score
+    let score = 50;
+
+    // Positive adaptability indicators
+    const balancedDeviations = characters.filter(char =>
+      char.battle_performance.strategy_deviations > 0 && char.battle_performance.strategy_deviations < 3
+    ).length;
+    score += (balancedDeviations / characters.length) * 25;
+
+    const highConfidence = characters.filter(char => char.mental_state.confidence > 60).length;
+    score += (highConfidence / characters.length) * 15;
+
+    // Negative adaptability indicators
+    const rigidChars = characters.filter(char => char.battle_performance.strategy_deviations === 0).length;
+    if (rigidChars === characters.length) score -= 20; // Too rigid
+
+    const chaoticChars = characters.filter(char => char.battle_performance.strategy_deviations > 4).length;
+    score -= (chaoticChars / characters.length) * 30; // Too chaotic
+
+    return Math.max(0, Math.min(100, Math.floor(score)));
+  }
+
+  private static identifyEmergingDynamics(team: { characters: BattleCharacter[] }): string[] {
+    const dynamics: string[] = [];
+
+    const highPerformers = team.characters.filter((char: BattleCharacter) =>
+      char.battle_performance.successful_hits > 5 && char.battle_performance.teamplay_actions > 3
+    );
+
+    if (highPerformers.length > 0) {
+      dynamics.push('Natural leaders emerging from strong performance');
+    }
+
+    const strugglingChars = team.characters.filter((char: BattleCharacter) =>
+      char.current_health < this.getStat(char, 'max_health', 100) * 0.5 && char.mental_state.stress > 70
+    );
+
+    if (strugglingChars.length > 1) {
+      dynamics.push('Multiple team members may need additional support');
+    }
+
+    return dynamics;
+  }
+
+  private static identifyStrengthenedBonds(team: { characters: BattleCharacter[] }): string[] {
+    const bonds: string[] = [];
+
+    // Look for characters who helped each other
+    team.characters.forEach((char: BattleCharacter) => {
+      if (char.battle_performance.teamplay_actions > 3) {
+        bonds.push(`${char.character.name} has strengthened bonds through teamwork`);
+      }
+    });
+
+    return bonds;
+  }
+
+  private static identifyWeakenedBonds(team: { characters: BattleCharacter[] }): string[] {
+    const bonds: string[] = [];
+
+    // Look for characters with trust issues or high stress
+    team.characters.forEach((char: BattleCharacter) => {
+      if (char.mental_state.team_trust < 30) {
+        bonds.push(`${char.character.name}'s trust in the team has deteriorated`);
+      }
+    });
+
+    return bonds;
+  }
+
+  private static playActionSoundEffect(
+    action: CombatAction,
+    actor: BattleCharacter,
+    target: BattleCharacter,
+    damage: number
+  ): void {
+    try {
+      // Determine sound effect based on action type and character archetype
+      let soundEffect = 'sword_slash'; // default
+
+      if (action.actual_action.type === 'ability') {
+        // Magic-based characters use magic sound
+        if (actor.character.archetype === 'mage' || actor.character.archetype === 'mystic') {
+          soundEffect = 'magic_cast';
+        } else {
+          soundEffect = 'sword_slash';
+        }
+      } else if (action.actual_action.type === 'basic_attack') {
+        // Physical attack sounds based on character type
+        switch (actor.character.archetype) {
+          case 'warrior':
+          case 'assassin':
+            soundEffect = 'sword_slash';
+            break;
+          case 'mage':
+          case 'mystic':
+            soundEffect = 'magic_cast';
+            break;
+          default:
+            soundEffect = 'sword_slash';
+        }
+      }
+
+      // Check for critical hits (high damage relative to actor's attack)
+      const attack = this.getStat(actor, 'attack', 10);
+      const isCritical = damage > attack * 1.5;
+      if (isCritical) {
+        soundEffect = 'critical_hit';
+      }
+
+      // Check if attack was blocked (very low damage)
+      const wasBlocked = damage < attack * 0.3;
+      if (wasBlocked) {
+        soundEffect = 'block';
+      }
+
+      // Play the sound effect
+      audioService.playSoundEffect(soundEffect);
+
+      // Add additional effects for special situations
+      if (target.current_health === 0) {
+        // Character defeated
+        setTimeout(() => audioService.playSoundEffect('defeat'), 500);
+      }
+
+    } catch (error) {
+      console.warn('Failed to play action sound effect:', error);
+    }
+  }
+
+  private static calculateCultureShift(oldChemistry: number, new_chemistry: number, evolution_factors: string[]): string {
+    const delta = new_chemistry - oldChemistry;
+
+    if (delta >= 20) {
+      return 'Positive transformation - team culture strengthening';
+    } else if (delta >= 10) {
+      return 'Gradual improvement in team dynamics';
+    } else if (delta <= -20) {
+      return 'Cultural breakdown - trust and unity deteriorating';
+    } else if (delta <= -10) {
+      return 'Negative shift in team culture';
+    } else if (evolution_factors.some(factor => factor.includes('teamwork'))) {
+      return 'Stable culture with improved teamwork';
+    } else if (evolution_factors.some(factor => factor.includes('friction'))) {
+      return 'Cultural tension with some stability';
+    } else {
+      return 'Minimal cultural change - status quo maintained';
+    }
+  }
+
+  private static getStat(bc: BattleCharacter, stat: string, fallback: number = 0): number {
+    const c = bc.character;
+    if (stat in c && typeof (c as any)[stat] === 'number') {
+      return (c as any)[stat];
+    }
+    if ('stats' in c && c.stats && stat in c.stats) {
+      return (c.stats as any)[stat];
+    }
+    return fallback;
+  }
+}
+
+export default BattleEngine;

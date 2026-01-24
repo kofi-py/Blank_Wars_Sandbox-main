@@ -1,0 +1,846 @@
+'use client';
+
+import { useState, useEffect, useRef } from 'react';
+import { AnimatePresence } from 'framer-motion';
+import SafeMotion from './SafeMotion';
+import { useMobileSafeMotion } from '@/hooks/useMobileSafeMotion';
+import {
+  Building, Crown, Sparkles, TrendingUp,
+  CheckCircle, Lock, AlertCircle, Coins,
+  Gem, Star, ChevronRight, Info, Send, User
+} from 'lucide-react';
+import {
+  FACILITIES,
+  Facility,
+  FacilityState,
+  calculateFacilityBonus,
+  getFacilityUpgradeCost,
+  canUnlockFacility
+} from '@/data/facilities';
+
+// New imports for Real Estate Agent chat
+import { io, Socket } from 'socket.io-client';
+import { realEstateAgents } from '../data/realEstateAgents_UPDATED';
+import { RealEstateAgent } from '../data/realEstateAgentTypes';
+
+// Message interface for chat
+interface Message {
+  id: number;
+  type: 'player' | 'agent' | 'system';
+  content: string;
+  timestamp: Date;
+}
+
+interface FacilitiesManagerProps {
+  team_level: number;
+  currency: { coins: number; gems: number };
+  unlocked_achievements: string[];
+  owned_facilities: FacilityState[];
+  onPurchaseFacility: (facilityId: string) => void;
+  onUpgradeFacility: (facilityId: string) => void;
+  onPayMaintenance: (facilityId: string) => void;
+}
+
+export default function FacilitiesManager({
+  team_level,
+  currency,
+  unlocked_achievements,
+  owned_facilities,
+  onPurchaseFacility,
+  onUpgradeFacility,
+  onPayMaintenance
+}: FacilitiesManagerProps) {
+  const { isMobile, get_safe_motion_props } = useMobileSafeMotion();
+  console.log('🏢 FacilitiesManager rendering!');
+  const [selectedCategory, setSelectedCategory] = useState<string>('all');
+  const [selectedFacility, setSelectedFacility] = useState<Facility | null>(null);
+  const [showDetailsModal, setShowDetailsModal] = useState(false);
+
+  // New state for Real Estate Agent chat
+  const [selectedAgentId, setSelectedAgentId] = useState(realEstateAgents[0].id);
+  const selectedAgent = (() => {
+    const found = realEstateAgents.find(agent => agent.id === selectedAgentId);
+    if (!found) {
+      throw new Error(`Real estate agent not found: ${selectedAgentId}`);
+    }
+    return found;
+  })();
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [inputMessage, setInputMessage] = useState('');
+  const [isTyping, setIsTyping] = useState(false);
+  const [connected, setConnected] = useState(false);
+  const socketRef = useRef<Socket | null>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  const categories = [
+    { id: 'all', label: 'All Facilities', icon: Building },
+    { id: 'training', label: 'Training', icon: TrendingUp },
+    { id: 'recovery', label: 'Recovery', icon: Sparkles },
+    { id: 'support', label: 'Support', icon: Crown },
+    { id: 'premium', label: 'Premium', icon: Star }
+  ];
+
+  const filteredFacilities = selectedCategory === 'all'
+    ? FACILITIES
+    : FACILITIES.filter(f => f.category === selectedCategory);
+
+  const getFacilityStatus = (facility: Facility) => {
+    const owned = (owned_facilities && Array.isArray(owned_facilities))
+      ? owned_facilities.find(f => f.id === facility.id)
+      : null;
+    const canUnlock = canUnlockFacility(
+      facility,
+      team_level,
+      unlocked_achievements,
+      owned_facilities.map(f => f.id)
+    );
+    const canAfford = currency.coins >= facility.cost.coins && currency.gems >= facility.cost.gems;
+
+    if (owned) {
+      return {
+        type: 'owned',
+        level: owned.level,
+        can_upgrade: owned.level < facility.max_level,
+        upgrade_cost: getFacilityUpgradeCost(facility, owned.level),
+        can_afford_upgrade: owned.level < facility.max_level &&
+          currency.coins >= getFacilityUpgradeCost(facility, owned.level).coins &&
+          currency.gems >= getFacilityUpgradeCost(facility, owned.level).gems,
+        maintenance_due: !owned.maintenance_paid
+      };
+    }
+
+    return {
+      type: canUnlock ? (canAfford ? 'available' : 'affordable') : 'locked',
+      canUnlock,
+      canAfford
+    };
+  };
+
+  const openFacilityDetails = (facility: Facility) => {
+    console.log('Opening facility details for:', facility.name);
+    setSelectedFacility(facility);
+    setShowDetailsModal(true);
+  };
+
+  const handlePurchase = (facilityId: string) => {
+    onPurchaseFacility(facilityId);
+    setShowDetailsModal(false);
+  };
+
+  const handleUpgrade = (facilityId: string) => {
+    onUpgradeFacility(facilityId);
+    setShowDetailsModal(false);
+  };
+
+  // --- Real Estate Agent Chat Logic ---
+  useEffect(() => {
+    const socketUrl = 'http://localhost:4000';
+    console.log('🔌 [FacilitiesManager] Connecting to local backend:', socketUrl);
+
+    socketRef.current = io(socketUrl, {
+      transports: ['websocket', 'polling'],
+      timeout: 20000,
+      withCredentials: true, // Include cookies for authentication
+    });
+
+    socketRef.current.on('connect', () => {
+      console.log('✅ FacilitiesManager Socket connected! Waiting for authentication...');
+    });
+
+    socketRef.current.on('auth_success', (data: { user_id: string; username: string }) => {
+      console.log('🔐 FacilitiesManager Socket authenticated!', data);
+      setConnected(true);
+      // Initial message from the selected agent
+      setMessages(prev => [...prev, {
+        id: Date.now(),
+        type: 'agent',
+        content: `Greetings, Coach! ${selectedAgent.name} at your service. How can I assist you in optimizing your team's real estate portfolio today?`,
+        timestamp: new Date(),
+      }]);
+    });
+
+    socketRef.current.on('auth_error', (error: { error: string }) => {
+      console.error('❌ FacilitiesManager Socket authentication failed:', error);
+      setConnected(false);
+    });
+
+    socketRef.current.on('disconnect', () => {
+      console.log('❌ FacilitiesManager Socket disconnected');
+      setConnected(false);
+    });
+
+    socketRef.current.on('facilities_chat_response', (data: { message?: string; error?: string; agent_id?: string }) => {
+      console.log('📨 FacilitiesManager response:', data);
+
+      if (data.error) {
+        console.error('❌ Facilities chat error received:', data.error);
+        const errorMessage: Message = {
+          id: Date.now(),
+          type: 'system',
+          content: `Error: ${data.error}`,
+          timestamp: new Date(),
+        };
+        setMessages(prev => [...prev, errorMessage]);
+      } else {
+        if (!data.message) {
+          throw new Error('Agent response missing message property');
+        }
+        const agentMessage: Message = {
+          id: Date.now(),
+          type: 'agent',
+          content: data.message,
+          timestamp: new Date(),
+        };
+        setMessages(prev => [...prev, agentMessage]);
+      }
+
+      setIsTyping(false);
+    });
+
+    socketRef.current.on('chat_error', (error: { message: string }) => {
+      console.error('❌ FacilitiesManager error:', error);
+      setIsTyping(false);
+    });
+
+    return () => {
+      socketRef.current?.disconnect();
+    };
+  }, [selectedAgent.id]); // Reconnect if agent changes
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
+
+  const sendMessage = (content: string) => {
+    if (!content.trim() || isTyping || !connected || !socketRef.current) {
+      return;
+    }
+
+    const playerMessage: Message = {
+      id: Date.now(),
+      type: 'player',
+      content,
+      timestamp: new Date(),
+    };
+
+    setMessages(prev => [...prev, playerMessage]);
+    setInputMessage('');
+    setIsTyping(true);
+
+    console.log('📤 FacilitiesManager message:', content);
+
+    // Prepare comprehensive facilities context data
+    const facilitiesContext = {
+      team_level,
+      currency,
+      unlocked_achievements,
+
+      // Detailed owned facilities with current benefits
+      owned_facilities: owned_facilities.map(f => {
+        const facilityData = FACILITIES.find(facility => facility.id === f.id);
+        if (!facilityData) {
+          throw new Error(`Facility data not found for owned facility: ${f.id}`);
+        }
+        if (!facilityData.name) {
+          throw new Error(`Facility ${f.id} missing name property`);
+        }
+        if (!facilityData.category) {
+          throw new Error(`Facility ${f.id} missing category property`);
+        }
+        if (!facilityData.max_level) {
+          throw new Error(`Facility ${f.id} missing max_level property`);
+        }
+        if (!facilityData.bonuses) {
+          throw new Error(`Facility ${f.id} missing bonuses property`);
+        }
+        if (!facilityData.description) {
+          throw new Error(`Facility ${f.id} missing description property`);
+        }
+        if (!facilityData.benefits) {
+          throw new Error(`Facility ${f.id} missing benefits property`);
+        }
+        return {
+          id: f.id,
+          name: facilityData.name,
+          category: facilityData.category,
+          level: f.level,
+          max_level: facilityData.max_level,
+          maintenance_paid: f.maintenance_paid,
+          current_bonuses: facilityData.bonuses,
+          description: facilityData.description,
+          benefits: facilityData.benefits,
+          upgrade_cost: facilityData && f.level < facilityData.max_level ?
+            getFacilityUpgradeCost(facilityData, f.level) : null
+        };
+      }),
+
+      // Currently selected facility details
+      selected_facility: selectedFacility ? {
+        id: selectedFacility.id,
+        name: selectedFacility.name,
+        category: selectedFacility.category,
+        description: selectedFacility.description,
+        cost: selectedFacility.cost,
+        benefits: selectedFacility.benefits,
+        bonuses: selectedFacility.bonuses,
+        unlock_requirements: selectedFacility.unlock_requirements,
+        upgrade_costs: selectedFacility.upgrade_costs,
+        max_level: selectedFacility.max_level,
+        maintenance_cost: selectedFacility.maintenance_cost,
+        battle_impact: selectedFacility.bonuses.filter(b => b.type === 'battle'),
+        training_impact: selectedFacility.bonuses.filter(b => b.type === 'training'),
+        recovery_impact: selectedFacility.bonuses.filter(b => b.type === 'recovery')
+      } : null,
+
+      // All available facilities with unlock status
+      all_facilities: FACILITIES.map(f => ({
+        id: f.id,
+        name: f.name,
+        category: f.category,
+        description: f.description,
+        cost: f.cost,
+        benefits: f.benefits,
+        bonuses: f.bonuses,
+        unlock_requirements: f.unlock_requirements,
+        is_owned: owned_facilities.some(owned => owned.id === f.id),
+        can_afford: currency.coins >= f.cost.coins && currency.gems >= f.cost.gems,
+        can_unlock: canUnlockFacility(f, team_level, unlocked_achievements, owned_facilities.map(o => o.id))
+      })),
+
+      // Strategic headquarters context (mock data - should come from actual HQ state)
+      headquarters: {
+        current_tier: 'spartan_apartment', // 2 rooms, 4 characters per room max
+        total_capacity: 8,
+        current_occupancy: 10, // Overcrowded!
+        rooms: [
+          {
+            id: 'room1',
+            name: 'Main Room',
+            theme: null, // Unthemed = -3 morale penalty
+            assigned_characters: ['achilles', 'holmes', 'dracula', 'joan', 'tesla'],
+            beds: [
+              { type: 'bunk_bed', capacity: 2, comfort_bonus: 5 },
+              { type: 'couch', capacity: 1, comfort_bonus: 0 }
+            ],
+            sleeping_arrangement: '2 in bunks, 1 on couch, 2 on floor (-10 comfort)',
+            conflicts: ['dracula vs holmes (-15% teamwork)', 'achilles vs joan (-8% teamwork)']
+          },
+          {
+            id: 'room2',
+            name: 'Side Room',
+            theme: 'greek_classical', // +15 Strength for Achilles if he was here
+            assigned_characters: ['cleopatra', 'genghis_khan', 'merlin', 'sun_wukong', 'billy_the_kid'],
+            beds: [
+              { type: 'bunk_bed', capacity: 2, comfort_bonus: 5 }
+            ],
+            sleeping_arrangement: '2 in bunks, 3 on floor (-10 comfort)',
+            conflicts: ['cleopatra vs genghis_khan (-12% teamwork)']
+          }
+        ],
+        penalties: {
+          'All Stats': -23, // -8 from spartan apartment, -15 from overcrowding
+          'Morale': -20, // -15 from tier, -5 from overcrowding
+          'Teamwork': -35 // -10 from tier, -25 from conflicts
+        },
+        bonuses: {
+          // None currently - no characters in themed rooms that suit them
+        }
+      },
+
+      // Battle performance insights
+      battle_impact: {
+        current_penalties: [
+          'Spartan Apartment: -8% All Stats, -15% Morale, -10% Teamwork',
+          'Overcrowding (10 in 8 capacity): -15% All Stats, -10% Teamwork',
+          'Character Conflicts: -35% Teamwork total',
+          'Poor Sleep (6 fighters on floor): -10 comfort affecting vitality',
+          'Unthemed Rooms: -3% Morale'
+        ],
+        facility_bonuses: owned_facilities.map(f => {
+          const facilityData = FACILITIES.find(facility => facility.id === f.id);
+          if (!facilityData) {
+            throw new Error(`Facility data not found: ${f.id}`);
+          }
+          if (!facilityData.bonuses) {
+            throw new Error(`Facility ${f.id} missing bonuses property`);
+          }
+          if (!facilityData.name) {
+            throw new Error(`Facility ${f.id} missing name property`);
+          }
+          return facilityData.bonuses.map(b => `${facilityData.name}: ${b.description}`);
+        }).flat(),
+        strategic_recommendations: [
+          'URGENT: Upgrade to Basic House (25,000 coins, 50 gems) to reduce overcrowding penalties',
+          'Purchase beds to get fighters off the floor - each floor sleeper loses -10 comfort',
+          'Separate conflicting characters (Dracula/Holmes, Achilles/Joan, Cleopatra/Genghis)',
+          'Theme rooms for character bonuses - Greek Classical room would give Achilles +15 Strength',
+          'Training facilities provide XP bonuses but housing affects base performance'
+        ]
+      }
+    };
+
+    socketRef.current.emit('facilities_chat_message', {
+      message: content,
+      agent_id: selectedAgent.id,
+      agent_data: selectedAgent, // Pass the full agent data
+      facilities_context: facilitiesContext,
+      previous_messages: messages.slice(-5).map(m => ({
+        role: m.type === 'player' ? 'user' : 'assistant',
+        content: m.content
+      }))
+    });
+
+    setTimeout(() => {
+      if (isTyping) {
+        setIsTyping(false);
+      }
+    }, 15000);
+  };
+  // --- End Real Estate Agent Chat Logic ---
+
+  const FacilityCard: React.FC<{ facility: Facility }> = ({ facility }) => {
+    const status = getFacilityStatus(facility);
+
+    const getCardStyles = () => {
+      switch (status.type) {
+        case 'owned':
+          return 'border-green-500 bg-green-900/20';
+        case 'available':
+          return 'border-blue-500 bg-blue-900/20 hover:bg-blue-900/30 cursor-pointer';
+        case 'affordable':
+          return 'border-yellow-500 bg-yellow-900/20 hover:bg-yellow-900/30 cursor-pointer';
+        case 'locked':
+          return 'border-gray-600 bg-gray-700/30 opacity-75';
+        default:
+          return 'border-gray-600 bg-gray-700/30';
+      }
+    };
+
+    return (
+      <SafeMotion
+        initial={{ opacity: 0, scale: isMobile ? 1 : 0.9 }}
+        animate={{ opacity: 1, scale: 1 }}
+        transition={{ duration: isMobile ? 0.15 : 0.3, type: isMobile ? 'tween' : 'spring' }}
+        class_name={`p-4 rounded-lg border transition-all ${getCardStyles()}`}
+        onClick={() => openFacilityDetails(facility)}
+        as="div"
+      >
+        <div className="flex items-start justify-between mb-3">
+          <div className="flex items-center gap-3">
+            <div className={`text-2xl p-2 rounded-lg ${facility.background_color}`}>
+              {facility.icon}
+            </div>
+            <div>
+              <h3 className={`font-semibold ${facility.text_color}`}>
+                {facility.name}
+              </h3>
+              <p className="text-sm text-gray-400 capitalize">
+                {facility.category} Facility
+              </p>
+            </div>
+          </div>
+
+          <div className="flex flex-col items-end gap-1">
+            {status.type === 'owned' && (
+              <div className="flex items-center gap-1 text-green-400">
+                <CheckCircle className="w-4 h-4" />
+                <span className="text-sm font-semibold">Lv.{status.level}</span>
+              </div>
+            )}
+            {status.type === 'locked' && (
+              <Lock className="w-4 h-4 text-gray-500" />
+            )}
+            {status.maintenance_due && (
+              <AlertCircle className="w-4 h-4 text-yellow-500" />
+            )}
+          </div>
+        </div>
+
+        <p className="text-sm text-gray-300 mb-3 line-clamp-2">
+          {facility.description}
+        </p>
+
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-4 text-sm">
+            <div className="flex items-center gap-1 text-yellow-400">
+              <Coins className="w-4 h-4" />
+              <span>{facility.cost.coins.toLocaleString()}</span>
+            </div>
+            <div className="flex items-center gap-1 text-purple-400">
+              <Gem className="w-4 h-4" />
+              <span>{facility.cost.gems}</span>
+            </div>
+          </div>
+
+          <button className="flex items-center gap-1 text-xs text-gray-400 hover:text-white">
+            <Info className="w-3 h-3" />
+            Details
+          </button>
+        </div>
+
+        {status.type === 'owned' && (
+          <div className="mt-3 pt-3 border-t border-gray-600">
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-green-300">Active Bonuses</span>
+              <span className="text-green-400">
+                +{calculateFacilityBonus(facility, status.level).toFixed(0)}%
+              </span>
+            </div>
+          </div>
+        )}
+      </SafeMotion>
+    );
+  };
+
+  const FacilityDetailsModal = () => {
+    if (!selectedFacility) return null;
+
+    const status = getFacilityStatus(selectedFacility);
+
+    return (
+      <SafeMotion
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        transition={{ duration: isMobile ? 0.15 : 0.25, type: isMobile ? 'tween' : 'spring' }}
+        class_name="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50"
+        onClick={() => setShowDetailsModal(false)}
+        as="div"
+      >
+        <SafeMotion
+          initial={{ scale: 0.95, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+          exit={{ scale: 0.95, opacity: 0 }}
+          class_name="bg-gray-900/50 rounded-xl border border-gray-700 p-6 max-w-2xl w-full max-h-[90vh] overflow-y-auto"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="flex items-start justify-between mb-4">
+            <div className="flex items-center gap-3">
+              <div className={`text-3xl p-3 rounded-lg ${selectedFacility.background_color}`}>
+                {selectedFacility.icon}
+              </div>
+              <div>
+                <h2 className={`text-2xl font-bold ${selectedFacility.text_color}`}>
+                  {selectedFacility.name}
+                </h2>
+                <p className="text-gray-400 capitalize">
+                  {selectedFacility.category} Facility
+                </p>
+              </div>
+            </div>
+
+            <button
+              onClick={() => setShowDetailsModal(false)}
+              className="text-gray-400 hover:text-white"
+            >
+              ✕
+            </button>
+          </div>
+
+          <p className="text-gray-300 mb-6">{selectedFacility.description}</p>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+            <div>
+              <h3 className="text-lg font-semibold text-white mb-3">Benefits</h3>
+              <ul className="space-y-2">
+                {selectedFacility.benefits.map((benefit, index) => (
+                  <li key={index} className="flex items-start gap-2 text-sm">
+                    <CheckCircle className="w-4 h-4 text-green-400 mt-0.5 flex-shrink-0" />
+                    <span className="text-gray-300">{benefit}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+
+            <div>
+              <h3 className="text-lg font-semibold text-white mb-3">Bonuses</h3>
+              <div className="space-y-2">
+                {selectedFacility.bonuses.map((bonus, index) => (
+                  <div key={index} className="flex items-center justify-between text-sm">
+                    <span className="text-gray-300">{bonus.description}</span>
+                    <span className="text-green-400 font-semibold">
+                      +{status.type === 'owned' ?
+                        calculateFacilityBonus(selectedFacility, status.level).toFixed(0) :
+                        bonus.value}%
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* Unlock Requirements */}
+          {status.type === 'locked' && (
+            <div className="bg-gray-700/50 rounded-lg p-4 mb-6">
+              <h3 className="text-lg font-semibold text-white mb-2">Unlock Requirements</h3>
+              <div className="space-y-2 text-sm">
+                {selectedFacility.unlock_requirements.team_level && (
+                  <div className={`flex items-center gap-2 ${
+                    team_level >= selectedFacility.unlock_requirements.team_level ? 'text-green-400' : 'text-red-400'
+                  }`}>
+                    <span>Team Level {selectedFacility.unlock_requirements.team_level}</span>
+                    {team_level >= selectedFacility.unlock_requirements.team_level && <CheckCircle className="w-4 h-4" />}
+                  </div>
+                )}
+                {selectedFacility.unlock_requirements.achievements?.map((achievement) => (
+                  <div key={achievement} className={`flex items-center gap-2 ${
+                    unlocked_achievements.includes(achievement) ? 'text-green-400' : 'text-red-400'
+                  }`}>
+                    <span>Achievement: {achievement}</span>
+                    {unlocked_achievements.includes(achievement) && <CheckCircle className="w-4 h-4" />}
+                  </div>
+                ))}
+                {selectedFacility.unlock_requirements.prerequisite_facilities?.map((facility) => (
+                  <div key={facility} className={`flex items-center gap-2 ${
+                    owned_facilities.some(f => f.id === facility) ? 'text-green-400' : 'text-red-400'
+                  }`}>
+                    <span>Requires: {FACILITIES.find(f => f.id === facility)?.name}</span>
+                    {owned_facilities.some(f => f.id === facility) && <CheckCircle className="w-4 h-4" />}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Action Buttons */}
+          <div className="flex gap-3">
+            {status.type === 'available' && (
+              <button
+                onClick={() => handlePurchase(selectedFacility.id)}
+                className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-6 rounded-lg transition-colors"
+              >
+                Purchase for {selectedFacility.cost.coins.toLocaleString()} coins, {selectedFacility.cost.gems} gems
+              </button>
+            )}
+
+            {status.type === 'affordable' && (
+              <button
+                disabled
+                className="flex-1 bg-gray-600 text-gray-300 font-semibold py-3 px-6 rounded-lg"
+              >
+                Insufficient Funds
+              </button>
+            )}
+
+            {status.type === 'owned' && status.can_upgrade && (
+              <button
+                onClick={() => handleUpgrade(selectedFacility.id)}
+                disabled={!status.can_afford_upgrade}
+                className={`flex-1 font-semibold py-3 px-6 rounded-lg transition-colors ${
+                  status.can_afford_upgrade
+                    ? 'bg-purple-600 hover:bg-purple-700 text-white'
+                    : 'bg-gray-600 text-gray-300'
+                }`}
+              >
+                Upgrade to Lv.{status.level + 1} for {status.upgrade_cost.coins.toLocaleString()} coins, {status.upgrade_cost.gems} gems
+              </button>
+            )}
+
+            {status.type === 'owned' && status.maintenance_due && (
+              <button
+                onClick={() => onPayMaintenance(selectedFacility.id)}
+                className="bg-yellow-600 hover:bg-yellow-700 text-white font-semibold py-3 px-6 rounded-lg transition-colors"
+              >
+                Pay Maintenance
+              </button>
+            )}
+          </div>
+        </SafeMotion>
+      </SafeMotion>
+    );
+  };
+
+  return (
+    <div className="max-w-7xl mx-auto space-y-6">
+      {/* Header */}
+      <div className="bg-gray-800/80 rounded-xl p-6 border border-gray-700">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-3">
+            <Building className="w-8 h-8 text-blue-400" />
+            <h1 className="text-3xl font-bold text-white">Team Facilities</h1>
+          </div>
+
+          <div className="flex items-center gap-6">
+            <div className="flex items-center gap-2 text-yellow-400">
+              <Coins className="w-5 h-5" />
+              <span className="font-semibold text-xl">{currency.coins.toLocaleString()}</span>
+            </div>
+            <div className="flex items-center gap-2 text-purple-400">
+              <Gem className="w-5 h-5" />
+              <span className="font-semibold text-xl">{currency.gems}</span>
+            </div>
+          </div>
+        </div>
+
+        <p className="text-gray-300 mb-4">
+          Invest in facilities to enhance your team's training, recovery, and performance. Each facility provides unique bonuses and unlocks new possibilities.
+        </p>
+
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+          <div className="bg-gray-800/50 rounded-lg p-3 text-center">
+            <div className="text-2xl font-bold text-blue-400">{owned_facilities.length}</div>
+            <div className="text-gray-400">Owned Facilities</div>
+          </div>
+          <div className="bg-gray-800/50 rounded-lg p-3 text-center">
+            <div className="text-2xl font-bold text-green-400">{team_level}</div>
+            <div className="text-gray-400">Team Level</div>
+          </div>
+          <div className="bg-gray-800/50 rounded-lg p-3 text-center">
+            <div className="text-2xl font-bold text-purple-400">
+              {owned_facilities.reduce((sum, f) => sum + f.level, 0)}
+            </div>
+            <div className="text-gray-400">Total Levels</div>
+          </div>
+          <div className="bg-gray-800/50 rounded-lg p-3 text-center">
+            <div className="text-2xl font-bold text-yellow-400">
+              {owned_facilities.filter(f => !f.maintenance_paid).length}
+            </div>
+            <div className="text-gray-400">Maintenance Due</div>
+          </div>
+        </div>
+      </div>
+
+      {/* Category Filter */}
+      <div className="flex gap-2 overflow-x-auto">
+        {categories.map((category) => {
+          const Icon = category.icon;
+          return (
+            <button
+              key={category.id}
+              onClick={() => setSelectedCategory(category.id)}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-all whitespace-nowrap ${
+                selectedCategory === category.id
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+              }`}
+            >
+              <Icon className="w-4 h-4" />
+              <span>{category.label}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Facilities Grid */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        <AnimatePresence mode="popLayout">
+          {filteredFacilities.map((facility) => (
+            <FacilityCard key={facility.id} facility={facility} />
+          ))}
+        </AnimatePresence>
+      </div>
+
+      {/* Details Modal */}
+      <AnimatePresence>
+        {showDetailsModal && <FacilityDetailsModal />}
+      </AnimatePresence>
+
+      {/* Real Estate Agent Chat Interface */}
+      <SafeMotion
+        class_name="bg-gradient-to-br from-gray-900/20 to-gray-800/20 rounded-xl backdrop-blur-sm border border-gray-700/30 overflow-hidden p-6 space-y-4"
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.5, delay: 0.2 }}
+      >
+        <h2 className="text-2xl font-bold text-white flex items-center gap-2">
+          <User className="w-6 h-6 text-gray-400" />
+          Real Estate Agent Advisory
+        </h2>
+        <p className="text-gray-300">
+          Consult with a specialized Real Estate Agent to optimize your team's facilities.
+        </p>
+
+        {/* Agent Selection */}
+        <div className="mb-4">
+          <label htmlFor="agent-select" className="block text-sm font-medium text-gray-400 mb-2">
+            Choose your Agent:
+          </label>
+          <select
+            id="agent-select"
+            value={selectedAgentId}
+            onChange={(e) => setSelectedAgentId(e.target.value)}
+            className="block w-full p-2 border border-gray-600 rounded-md bg-gray-700 text-white focus:ring-blue-500 focus:border-blue-500"
+          >
+            {realEstateAgents.map((agent) => (
+              <option key={agent.id} value={agent.id}>
+                {agent.name} ({agent.tagline})
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {/* Chat Display */}
+        <div className="flex flex-col h-[400px] bg-gray-800/50 rounded-lg border border-gray-700 overflow-hidden">
+          <div className="flex-1 overflow-y-auto p-4 space-y-4">
+            {messages.map((message) => (
+              <SafeMotion
+                key={message.id}
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                class_name={`flex ${message.type === 'player' ? 'justify-end' : 'justify-start'}`}
+              >
+                <div className={`max-w-xs lg:max-w-md px-4 py-2 rounded-lg ${
+                  message.type === 'player'
+                    ? 'bg-blue-600 text-white'
+                    : message.type === 'agent'
+                    ? 'bg-green-600 text-white'
+                    : 'bg-yellow-600 text-white text-sm'
+                }`}>
+                  <p>{message.content}</p>
+                </div>
+              </SafeMotion>
+            ))}
+            {isTyping && (
+              <SafeMotion
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                class_name="flex justify-start"
+              >
+                <div className="bg-green-600 text-white px-4 py-2 rounded-lg">
+                  <div className="flex gap-1">
+                    <div className="w-2 h-2 bg-white rounded-full animate-bounce" />
+                    <div className="w-2 h-2 bg-white rounded-full animate-bounce" style={{ animationDelay: '0.1s' }} />
+                    <div className="w-2 h-2 bg-white rounded-full animate-bounce" style={{ animationDelay: '0.2s' }} />
+                  </div>
+                </div>
+              </SafeMotion>
+            )}
+            <div ref={messagesEndRef} />
+          </div>
+
+          {/* Chat Input */}
+          <div className="p-4 border-t border-gray-700 bg-gray-800/70">
+            <div className="text-xs text-gray-400 mb-2">
+              Status: {connected ? '🟢 Connected' : '🔴 Disconnected'} |
+              {isTyping ? ` ⏳ ${selectedAgent.name} is contemplating a deal...` : ' ✅ Ready for your next inquiry'}
+            </div>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={inputMessage}
+                onChange={(e) => setInputMessage(e.target.value)}
+                onKeyPress={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    sendMessage(inputMessage);
+                  }
+                }}
+                placeholder={isTyping ? 'Agent is typing...' : `Ask ${selectedAgent.name} about facilities...`}
+                disabled={isTyping || !connected}
+                className="flex-1 bg-gray-700 border border-gray-600 rounded-full px-4 py-2 text-white placeholder-gray-400 focus:outline-none focus:border-blue-500 disabled:opacity-50"
+                autoComplete="off"
+              />
+              <button
+                onClick={() => sendMessage(inputMessage)}
+                disabled={!inputMessage.trim() || isTyping || !connected}
+                className="bg-gradient-to-r from-blue-600 to-cyan-600 hover:from-blue-500 hover:to-cyan-500 disabled:from-gray-600 disabled:to-gray-500 text-white p-2 rounded-full transition-all"
+              >
+                <Send className="w-5 h-5" />
+              </button>
+            </div>
+          </div>
+        </div>
+      </SafeMotion>
+    </div>
+  );
+}

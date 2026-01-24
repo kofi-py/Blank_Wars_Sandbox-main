@@ -1,0 +1,39 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Clear Blank Wars Cache</title>
+</head>
+<body>
+    <h1>Clearing Blank Wars Cache...</h1>
+    <p id="status">Working...</p>
+    
+    <script>
+        console.log('🧹 Clearing localStorage and sessionStorage...');
+        
+        // Clear all localStorage
+        localStorage.clear();
+        console.log('✅ localStorage cleared');
+        
+        // Clear all sessionStorage  
+        sessionStorage.clear();
+        console.log('✅ sessionStorage cleared');
+        
+        // Clear cookies for localhost
+        document.cookie.split(";").forEach(function(c) { 
+            document.cookie = c.replace(/^ +/, "").replace(/=.*/, "=;expires=" + new Date().toUTCString() + ";path=/"); 
+        });
+        console.log('✅ Cookies cleared');
+        
+        document.getElementById('status').innerHTML = 
+            '<h2 style="color: green;">✅ Cache cleared successfully!</h2>' +
+            '<p>You can now close this window and refresh localhost:3007</p>' +
+            '<p><strong>Character data has been reset.</strong></p>';
+            
+        // Auto-close after 3 seconds
+        setTimeout(() => {
+            window.close();
+        }, 3000);
+    </script>
+</body>
+</html>

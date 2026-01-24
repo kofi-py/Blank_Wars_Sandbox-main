@@ -1,0 +1,339 @@
+// Turn Execution Coordinator
+// Orchestrates the flow of a single character's turn
+// Integrates adherence checks, action surveys, and Plan B logic
+
+import { type BattleCharacter, type BattleState } from '@/data/battleFlow';
+import { type PlannedAction, type ActionStep } from '@/components/battle/CharacterActionPlanner';
+import { type AdherenceCheckResult } from '@/services/battleAPI';
+import {
+  generateActionSurvey,
+  applyPlanBWeighting,
+  selectFromSurvey,
+  type SurveyOption
+} from './actionSurveyGenerator';
+
+export interface TurnExecutionResult {
+  character_id: string;
+  adherence_check: AdherenceCheckResult;
+  planned_action: ActionStep | null;
+  actual_action: ActionStep | SurveyOption;
+  action_source: 'plan_executed' | 'plan_b_adaptation' | 'rebellion';
+  reasoning: string;
+}
+
+export interface BattleContext {
+  team_winning: boolean;
+  round_number: number;
+  teammates_alive: number;
+  teammates_total: number;
+}
+
+/**
+ * Execute a character's turn with full adherence system
+ * This is the main entry point for turn logic
+ *
+ * NOTE: Adherence check must be performed by the caller via performAdherenceCheckAPI
+ * from @/services/battleAPI (requires auth token). Pass the result here.
+ */
+export function executeTurn(
+  character: BattleCharacter,
+  plan: PlannedAction | null,
+  battle_state: BattleState,
+  adherenceCheck: AdherenceCheckResult | null
+): TurnExecutionResult {
+
+  // If no plan exists, character acts autonomously
+  if (!plan || plan.action_sequence.length === 0) {
+    return executeAutonomousTurn(character, battle_state);
+  }
+
+  // If no adherence check provided, assume character follows plan
+  if (!adherenceCheck) {
+    return executeWithAdherence(character, plan, battle_state, {
+      passed: true,
+      roll: 50,
+      threshold: 100,
+      base_adherence: 100,
+      modifiers_applied: [],
+      reasoning: 'No adherence check performed'
+    });
+  }
+
+  if (adherenceCheck.passed) {
+    // Character will TRY to follow the plan
+    return executeWithAdherence(character, plan, battle_state, adherenceCheck);
+  } else {
+    // Character rebels - ignores coach completely
+    return executeRebellion(character, plan, battle_state, adherenceCheck);
+  }
+}
+
+/**
+ * Character passed adherence - tries to execute planned action
+ */
+function executeWithAdherence(
+  character: BattleCharacter,
+  plan: PlannedAction,
+  battle_state: BattleState,
+  adherence_check: AdherenceCheckResult
+): TurnExecutionResult {
+
+  const planned_action = plan.action_sequence[0]; // First action in sequence
+
+  // Check if planned action is still available
+  const actionAvailable = checkActionAvailability(planned_action, character, battle_state);
+
+  if (actionAvailable.available) {
+    // Execute plan as-is
+    return {
+      character_id: character.character.id,
+      adherence_check,
+      planned_action,
+      actual_action: planned_action,
+      action_source: 'plan_executed',
+      reasoning: `${character.character.name} successfully executes the planned action.`
+    };
+  } else {
+    // Planned action unavailable - use Plan B
+    const survey = generateActionSurvey(character, battle_state, 3);
+    const weightedSurvey = applyPlanBWeighting(survey, plan.plan_b);
+    const selectedAction = selectFromSurvey(weightedSurvey);
+
+    return {
+      character_id: character.character.id,
+      adherence_check,
+      planned_action,
+      actual_action: selectedAction,
+      action_source: 'plan_b_adaptation',
+      reasoning: `${character.character.name} couldn't execute planned action (${actionAvailable.reason}). Adapted using Plan B (${plan.plan_b}): ${selectedAction.label}`
+    };
+  }
+}
+
+/**
+ * Character failed adherence - rebels and picks own action
+ */
+function executeRebellion(
+  character: BattleCharacter,
+  plan: PlannedAction,
+  battle_state: BattleState,
+  adherence_check: AdherenceCheckResult
+): TurnExecutionResult {
+
+  // Generate full action survey
+  const survey = generateActionSurvey(character, battle_state, 3);
+
+  // Select based on character's personality/mental state (not Plan B)
+  const selectedAction = selectByPersonality(survey, character);
+
+  return {
+    character_id: character.character.id,
+    adherence_check,
+    planned_action: plan.action_sequence[0] || null,
+    actual_action: selectedAction,
+    action_source: 'rebellion',
+    reasoning: `${character.character.name} rejects the coach's plan. ${adherence_check.reasoning} Chooses to: ${selectedAction.label}`
+  };
+}
+
+/**
+ * Character has no plan - acts based on AI/personality
+ */
+function executeAutonomousTurn(
+  character: BattleCharacter,
+  battle_state: BattleState,
+  battle_context: BattleContext
+): TurnExecutionResult {
+
+  const survey = generateActionSurvey(character, battle_state, 3);
+  const selectedAction = selectByPersonality(survey, character);
+
+  // Create a mock adherence check (always "pass" since no plan to rebel against)
+  const mockAdherenceCheck: AdherenceCheckResult = {
+    passed: true,
+    roll_value: 50,
+    threshold: 100,
+    factors: {
+      base_adherence: 0,
+      mental_healthModifier: 0,
+      stress_modifier: 0,
+      team_trustModifier: 0,
+      battle_contextModifier: 0,
+      total_modifier: 0,
+      final_threshold: 100
+    },
+    reasoning: 'No plan set - character acts autonomously'
+  };
+
+  return {
+    character_id: character.character.id,
+    adherence_check: mockAdherenceCheck,
+    planned_action: null,
+    actual_action: selectedAction,
+    action_source: 'rebellion', // Technically autonomous, but uses same selection logic
+    reasoning: `${character.character.name} has no plan and acts independently: ${selectedAction.label}`
+  };
+}
+
+/**
+ * Check if a planned action is still available to execute
+ */
+function checkActionAvailability(
+  action: ActionStep,
+  character: BattleCharacter,
+  battle_state: BattleState
+): { available: boolean; reason?: string } {
+
+  switch (action.type) {
+    case 'move':
+      if (!action.target_hex) {
+        return { available: false, reason: 'No target hex specified' };
+      }
+      // Check if hex is occupied
+      // TODO: Implement actual hex occupancy check
+      return { available: true };
+
+    case 'attack':
+      if (!action.target_id) {
+        return { available: false, reason: 'No target specified' };
+      }
+      // Check if target is alive
+      const target = findCharacterById(action.target_id, battle_state);
+      if (!target || target.current_health <= 0) {
+        return { available: false, reason: 'Target is dead or not found' };
+      }
+      return { available: true };
+
+    case 'power':
+      if (!action.ability_id) {
+        return { available: false, reason: 'No power specified' };
+      }
+      // Check cooldown
+      const powerCooldown = character.power_cooldowns.get(action.ability_id) || 0;
+      if (powerCooldown > 0) {
+        return { available: false, reason: `${action.ability_name} is on cooldown (${powerCooldown} turns)` };
+      }
+      // Check target
+      if (!action.target_id) {
+        return { available: false, reason: 'No target specified' };
+      }
+      const powerTarget = findCharacterById(action.target_id, battle_state);
+      if (!powerTarget || powerTarget.current_health <= 0) {
+        return { available: false, reason: 'Target is dead' };
+      }
+      return { available: true };
+
+    case 'spell':
+      if (!action.ability_id) {
+        return { available: false, reason: 'No spell specified' };
+      }
+      // Check cooldown
+      const spellCooldown = character.spell_cooldowns.get(action.ability_id) || 0;
+      if (spellCooldown > 0) {
+        return { available: false, reason: `${action.ability_name} is on cooldown (${spellCooldown} turns)` };
+      }
+      // Check mana
+      const spell = character.unlocked_spells.find(s => s.id === action.ability_id);
+      if (spell && character.current_mana < spell.mana_cost) {
+        return { available: false, reason: 'Not enough mana' };
+      }
+      // Check target
+      if (!action.target_id) {
+        return { available: false, reason: 'No target specified' };
+      }
+      const spellTarget = findCharacterById(action.target_id, battle_state);
+      if (!spellTarget || spellTarget.current_health <= 0) {
+        return { available: false, reason: 'Target is dead' };
+      }
+      return { available: true };
+
+    case 'defend':
+      return { available: true };
+
+    case 'item':
+      // TODO: Implement item availability check
+      return { available: true };
+
+    default:
+      return { available: false, reason: 'Unknown action type' };
+  }
+}
+
+/**
+ * Select action based on character personality and mental state
+ * Used during rebellion or autonomous action
+ */
+function selectByPersonality(
+  survey: { options: SurveyOption[] },
+  character: BattleCharacter
+): SurveyOption {
+
+  // Weight options based on character's mental state and personality
+  const weightedOptions = survey.options.map(option => {
+    let weight = option.priority_weight || 0;
+
+    // High stress → prefer defensive/flee options
+    if (character.mental_state.stress > 70) {
+      if (option.type === 'defend') weight += 40;
+      if (option.id === 'chaos_flee') weight += 30;
+      if (option.id === 'chaos_refuse') weight += 20;
+    }
+
+    // Low mental health → erratic behavior
+    if (character.mental_state.current_mental_health < 30) {
+      if (option.id.startsWith('chaos_')) weight += 25;
+    }
+
+    // Low team trust → may attack teammates
+    if (character.mental_state.team_trust < 20) {
+      if (option.id.startsWith('chaos_friendly_fire')) weight += 30;
+    }
+
+    // High confidence → prefer aggressive actions
+    if (character.mental_state.confidence > 70) {
+      if (option.type === 'attack') weight += 20;
+      if (option.ability_type === 'power_attack') weight += 30;
+    }
+
+    return {
+      ...option,
+      priority_weight: weight
+    };
+  });
+
+  // Select from weighted options
+  const minWeight = Math.min(...weightedOptions.map(o => o.priority_weight));
+  const normalized = weightedOptions.map(o => ({
+    ...o,
+    normalized_weight: o.priority_weight - minWeight + 1
+  }));
+
+  const totalWeight = normalized.reduce((sum, o) => sum + o.normalized_weight, 0);
+  let random = Math.random() * totalWeight;
+
+  for (const option of normalized) {
+    random -= option.normalized_weight;
+    if (random <= 0) {
+      return option;
+    }
+  }
+
+  return weightedOptions[0];
+}
+
+/**
+ * Find a character by ID across both teams
+ */
+function findCharacterById(
+  id: string,
+  battle_state: BattleState
+): BattleCharacter | null {
+
+  const playerChar = battle_state.teams.player.characters.find(c => c.character.id === id);
+  if (playerChar) return playerChar;
+
+  const opponentChar = battle_state.teams.opponent.characters.find(c => c.character.id === id);
+  if (opponentChar) return opponentChar;
+
+  return null;
+}

@@ -1,0 +1,215 @@
+import { db } from '../database';
+
+/**
+ * Master Bed Conflict Service
+ * Injects master bedroom conflicts into ANY scene type (kitchen, therapy, training, etc.)
+ * Uses existing team_context and scene_triggers tables
+ */
+
+export interface MasterBedConflictContext {
+  has_master_bed: boolean;
+  master_bed_occupant: string | null;
+  sleeps_on_floor: boolean;
+  should_inject_conflict: boolean;
+  conflict_text?: string;
+}
+
+export class MasterBedConflictService {
+  private static instance: MasterBedConflictService;
+
+  private constructor() {}
+
+  static get_instance(): MasterBedConflictService {
+    if (!MasterBedConflictService.instance) {
+      MasterBedConflictService.instance = new MasterBedConflictService();
+    }
+    return MasterBedConflictService.instance;
+  }
+
+  /**
+   * Assign character to master bed
+   */
+  async assignMasterBed(team_id: string, character_id: string): Promise<void> {
+    await db.query(
+      `UPDATE team_context
+       SET master_bed_character_id = $1, updated_at = CURRENT_TIMESTAMP
+       WHERE team_id = $2`,
+      [character_id, team_id]
+    );
+
+    console.log(`✅ Master bed assigned to ${character_id} in team ${team_id}`);
+  }
+
+  /**
+   * Get current master bed occupant
+   */
+  async getMasterBedOccupant(team_id: string): Promise<string | null> {
+    const result = await db.query(
+      'SELECT master_bed_character_id FROM team_context WHERE team_id = $1',
+      [team_id]
+    );
+
+    return result.rows[0]?.master_bed_character_id || null;
+  }
+
+  /**
+   * Check if character has master bed
+   */
+  async has_master_bed(team_id: string, character_id: string): Promise<boolean> {
+    const occupant = await this.getMasterBedOccupant(team_id);
+    return occupant === character_id;
+  }
+
+  /**
+   * Get all floor sleepers for jealousy conflicts
+   */
+  async getFloorSleepers(team_id: string): Promise<string[]> {
+    const result = await db.query(
+      `SELECT character_id
+       FROM character_living_context
+       WHERE team_id = $1 AND sleeps_on_floor = true`,
+      [team_id]
+    );
+
+    return result.rows.map(row => row.character_id);
+  }
+
+  /**
+   * Get conflict context for ANY scene type
+   */
+  async getConflictContext(
+    team_id: string,
+    character_id: string,
+    scene_type: 'mundane' | 'conflict' | 'chaos'
+  ): Promise<MasterBedConflictContext> {
+    const master_bed_occupant = await this.getMasterBedOccupant(team_id);
+    const has_master_bed = master_bed_occupant === character_id;
+    const floor_sleepers = await this.getFloorSleepers(team_id);
+    const sleeps_on_floor = floor_sleepers.includes(character_id);
+
+    // Decide if we should inject conflict
+    const conflict_potential = this.calculateConflictPotential(
+      master_bed_occupant,
+      floor_sleepers.length
+    );
+    const should_inject_conflict = this.should_inject_conflict(scene_type, conflict_potential);
+
+    let conflict_text: string | undefined;
+
+    if (should_inject_conflict) {
+      const trigger = await this.getConflictTrigger(scene_type);
+      conflict_text = trigger?.trigger_text;
+    }
+
+    return {
+      has_master_bed,
+      master_bed_occupant,
+      sleeps_on_floor,
+      should_inject_conflict,
+      conflict_text
+    };
+  }
+
+  /**
+   * Calculate conflict potential based on living situation
+   */
+  private calculateConflictPotential(
+    master_bed_occupant: string | null,
+    floor_sleeper_count: number
+  ): 'low' | 'medium' | 'high' {
+    if (master_bed_occupant && floor_sleeper_count > 0) {
+      return 'high'; // Someone has luxury while others suffer
+    } else if (master_bed_occupant) {
+      return 'medium'; // Status symbol exists
+    }
+    return 'low';
+  }
+
+  /**
+   * Decide if conflict should be injected
+   */
+  private should_inject_conflict(
+    scene_type: 'mundane' | 'conflict' | 'chaos',
+    conflict_potential: 'low' | 'medium' | 'high'
+  ): boolean {
+    const base_chances = {
+      mundane: 0.15,
+      conflict: 0.40,
+      chaos: 0.25
+    };
+
+    const potential_multiplier = {
+      low: 0.5,
+      medium: 1.0,
+      high: 1.5
+    };
+
+    const chance = base_chances[scene_type] * potential_multiplier[conflict_potential];
+    return Math.random() < chance;
+  }
+
+  /**
+   * Get conflict trigger from scene_triggers table
+   */
+  private async getConflictTrigger(
+    scene_type: 'mundane' | 'conflict' | 'chaos'
+  ): Promise<{ trigger_text: string } | null> {
+    try {
+      const result = await db.query(
+        `SELECT trigger_text
+         FROM scene_triggers
+         WHERE scene_type = $1 AND domain = 'living_quarters'
+         ORDER BY RANDOM()
+         LIMIT 1`,
+        [scene_type]
+      );
+
+      return result.rows[0] || null;
+    } catch (error) {
+      console.error('Error fetching master bed conflict trigger:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Inject master bed context into ANY scene prompt
+   * Universal method for kitchen, therapy, training, confessional, etc.
+   */
+  async injectIntoScenePrompt(
+    base_prompt: string,
+    team_id: string,
+    character_ids: string[],
+    scene_type: 'mundane' | 'conflict' | 'chaos'
+  ): Promise<string> {
+    if (character_ids.length === 0) return base_prompt;
+
+    // Pick a random character for context
+    const character_id = character_ids[Math.floor(Math.random() * character_ids.length)];
+    const context = await this.getConflictContext(team_id, character_id, scene_type);
+
+    if (!context.should_inject_conflict || !context.conflict_text) {
+      return base_prompt;
+    }
+
+    // Build injection
+    let injection = '\n\n--- Living Situation Context ---\n';
+
+    if (context.master_bed_occupant) {
+      injection += `${context.master_bed_occupant} has the master bedroom (status symbol).\n`;
+    }
+
+    const floor_sleepers = await this.getFloorSleepers(team_id);
+    if (floor_sleepers.length > 0) {
+      injection += `${floor_sleepers.length} character(s) sleeping on the floor.\n`;
+    }
+
+    injection += `\n_conflict: ${context.conflict_text}\n`;
+    injection += '--- End Context ---\n';
+
+    console.log(`🛏️ Injecting master bed conflict into ${scene_type} scene`);
+
+    return base_prompt + injection;
+  }
+}
+
+export default MasterBedConflictService;

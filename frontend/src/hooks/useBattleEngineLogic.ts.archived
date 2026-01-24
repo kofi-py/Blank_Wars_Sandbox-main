@@ -1,0 +1,383 @@
+import { useCallback, useRef } from 'react';
+import { BattleEngine } from '@/systems/battleEngine';
+import { PhysicalBattleEngine } from '@/systems/physicalBattleEngine';
+import {
+  RoundResult,
+  TeamCharacter,
+  Team,
+  BattleSetup
+} from '@/data/teamBattleSystem';
+import {
+  BattlePhase,
+  type BattleCharacter,
+  type ExecutedAction,
+  type PlannedAction,
+  type BattleState
+} from '@/data/battleFlow';
+import { type BattleStateData, type BattleStateAction } from '@/hooks/temp/useBattleState';
+import {
+  initializePsychologyState,
+  updatePsychologyState,
+  rollForDeviation,
+  calculateStabilityFactors,
+  type PsychologyState,
+  type DeviationEvent
+} from '@/data/characterPsychology';
+import { makeJudgeDecision, generateDeviationPrompt, judgePersonalities, type JudgeDecision } from '@/data/aiJudgeSystem';
+import { AIJudge, RogueAction, CharacterResponseGenerator } from '@/data/aiJudge';
+import { CoachingEngine, CoachingSession } from '@/data/coachingSystem';
+import { buildAIJudgeContext } from '@/services/battleContextAPI';
+
+interface UseBattleEngineLogicProps {
+  state: BattleStateData;
+  actions: any; // Using the full actions object from useBattleState
+  timeout_manager: {
+    setTimeout: (cb: () => void, delay: number) => any;
+    clearTimeout: (id: any) => void;
+  };
+  speak: (text: string) => void;
+  announce_battle_start: (team1: string, team2: string) => void;
+  announce_victory: (team: string, is_flawless?: boolean) => void;
+  announce_defeat: (team: string) => void;
+  announce_round_start: (round: number) => void;
+  announce_action: (action: string, delay?: number) => void;
+  announce_message: (message: string, type: string) => void;
+  conduct_team_huddle: () => void;
+  convert_to_battle_character: (char: TeamCharacter, morale: number) => BattleCharacter;
+  check_for_chaos: (attacker?: any, defender?: any, ability?: any, is_p1_first?: boolean) => any;
+  execute_combat_round: () => void;
+  calculate_battle_rewards: (playerWon?: boolean, character?: any) => void;
+  headquarters_effects: any;
+}
+
+export const useBattleEngineLogic = ({
+  state,
+  actions,
+  timeout_manager,
+  speak,
+  announce_battle_start,
+  announce_victory,
+  announce_defeat,
+  announce_round_start,
+  announce_action,
+  announce_message,
+  conduct_team_huddle,
+  convert_to_battle_character,
+  check_for_chaos,
+  execute_combat_round,
+  calculate_battle_rewards,
+  headquarters_effects
+}: UseBattleEngineLogicProps) => {
+  const { setTimeout: safeSetTimeout } = timeout_manager;
+  
+  // Refs to avoid stale closures
+  const battle_stateRef = useRef<BattleState | null>(null);
+  const current_roundRef = useRef(1);
+  
+  // Update refs when state changes
+  battle_stateRef.current = state.battle_state;
+  current_roundRef.current = state.current_round;
+
+  const startTeamBattle = useCallback(async () => {
+    // Initialize character psychology for all fighters
+    const psychologyMap = new Map<string, PsychologyState>();
+
+    // Initialize player team psychology with headquarters effects and teammates
+    state.player_team.characters.forEach(char => {
+      psychologyMap.set(char.id, initializePsychologyState(char, headquarters_effects, state.player_team.characters));
+    });
+
+    // Initialize opponent team psychology (no headquarters effects)
+    state.opponent_team.characters.forEach(char => {
+      psychologyMap.set(char.id, initializePsychologyState(char));
+    });
+
+    actions.setCharacterPsychology(psychologyMap);
+    actions.setActiveDeviations([]);
+    actions.setJudgeDecisions([]);
+
+    // Randomly select a judge for this battle
+    const randomJudge = judgePersonalities[Math.floor(Math.random() * judgePersonalities.length)];
+    actions.setCurrentJudge(randomJudge);
+
+    // Convert TeamCharacters to BattleCharacters with powers/spells loaded
+    const playerBattleChars: BattleCharacter[] = [];
+    for (const teamChar of state.player_team.characters) {
+      const battleChar = await convert_to_battle_character(teamChar, state.player_morale);
+      playerBattleChars.push(battleChar);
+    }
+
+    const opponentBattleChars: BattleCharacter[] = [];
+    for (const teamChar of state.opponent_team.characters) {
+      const battleChar = await convert_to_battle_character(teamChar, state.opponent_morale);
+      opponentBattleChars.push(battleChar);
+    }
+
+    // Collect all character IDs for context fetching
+    const all_character_ids = [
+      ...state.player_team.characters.map(c => c.id),
+      ...state.opponent_team.characters.map(c => c.id)
+    ];
+
+    // Build AI judge context with real database data
+    const ai_judge_context = await buildAIJudgeContext(
+      all_character_ids,
+      state.player_team.name,
+      state.opponent_team.name,
+      {
+        id: randomJudge.name.toLowerCase().replace(/\s+/g, '_'),
+        name: randomJudge.name,
+        personality: randomJudge.description
+      }
+    );
+
+    // Create new battleFlow BattleState
+    const newBattleState: BattleState = {
+      id: `battle_${Date.now()}`,
+      phase: 'pre-battle',
+      teams: {
+        player: {
+          characters: playerBattleChars,
+          team_chemistry: state.player_team.team_chemistry || 75,
+          current_morale: state.player_morale,
+          coaching_credits: 3,
+          status_effects: []
+        },
+        opponent: {
+          characters: opponentBattleChars,
+          team_chemistry: state.opponent_team.team_chemistry || 75,
+          current_morale: state.opponent_morale,
+          coaching_credits: 0,
+          status_effects: []
+        }
+      },
+      current_round: 1,
+      max_rounds: 10,
+      global_morale: {
+        player: state.player_morale,
+        opponent: state.opponent_morale
+      },
+      battle_log: [],
+      ai_judge_context,
+      coaching_data: {
+        credits_used: 0,
+        max_timeouts: 3,
+        timeouts_used: 0,
+        available_timeouts: 1,
+        credits_remaining: 3,
+        coaching_points: 100,
+        coaching_effectiveness: state.player_team.team_chemistry || 75,
+        team_respect: state.player_team.team_chemistry || 75
+      },
+      last_update: new Date(),
+      characterPlans: new Map()
+    };
+
+    actions.set_battle_state(newBattleState);
+    actions.set_phase('pre_battle_huddle');
+    announce_battle_start(state.player_team.name, state.opponent_team.name);
+    actions.set_current_announcement(`🏆 3v3 TEAM BATTLE: ${state.player_team.name} vs ${state.opponent_team.name}!
+    Your lineup: ${state.player_team.characters.map(c => c.name).join(', ')}
+    Opponents: ${state.opponent_team.characters.map(c => c.name).join(', ')}`);
+  }, [state.player_team, state.opponent_team, state.player_morale, state.opponent_morale]);
+
+  const executeTeamRound = useCallback(() => {
+    if (!state.battle_state) return;
+
+    const playerFighter = state.battle_state.current_fighters.player;
+    const opponentFighter = state.battle_state.current_fighters.opponent;
+
+    // Check if player character will follow the gameplan using sophisticated psychology system
+    const battlePlayerFighter = convert_to_battle_character(playerFighter, state.player_morale);
+    const planned_action: PlannedAction = {
+      type: 'ability',
+      action_type: 'ability',
+      ability_id: playerFighter.abilities[0]?.name || 'basic_attack',
+      target_id: opponentFighter.id,
+      coaching_influence: state.player_morale / 100 // Convert morale to coaching influence
+    };
+    
+    const adherenceCheck = PhysicalBattleEngine.performGameplanAdherenceCheck(battlePlayerFighter, planned_action);
+
+    let roundResult: RoundResult | null = null;
+
+    if (adherenceCheck.check_result === 'goes_rogue' || adherenceCheck.check_result === 'improvises') {
+      // Character goes rogue!
+      const rogueAction = AIJudge.generateRogueAction(
+        playerFighter,
+        opponentFighter, 
+        state.player_morale,
+        state.player_morale > state.opponent_morale ? 'winning' : 'losing'
+      );
+
+      const ruling = AIJudge.judgeRogueAction(rogueAction, opponentFighter, state.player_morale);
+      
+      actions.setCurrentRogueAction(rogueAction);
+      actions.setJudgeRuling(ruling);
+
+      roundResult = {
+        round: state.current_round,
+        attacker: playerFighter,
+        defender: opponentFighter,
+        attacker_action: 'rogue_action',
+        damage: ruling.damage,
+        was_strategy_adherent: false,
+        rogue_description: rogueAction.description,
+        morale_impact: ruling.morale_change,
+        new_attacker_hp: playerFighter.current_health - (ruling.target_damage || 0),
+        new_defender_hp: opponentFighter.current_health - ruling.damage,
+        narrative_description: ruling.narrative_description
+      };
+
+      // Generate coaching response with psychology reasoning
+      const coachResponse = AIJudge.generateCoachingResponse(rogueAction, ruling, state.player_team.coach_name);
+      actions.set_current_announcement(`${coachResponse}\n\n${ruling.narrative_description}`);
+
+    } else {
+      // Character follows the strategy
+      const ability = playerFighter.abilities[Math.floor(Math.random() * playerFighter.abilities.length)];
+      const baseAttack = playerFighter.attack + Math.random() * 10;
+      const defense = opponentFighter.defense + Math.random() * 5;
+      const damage = Math.max(1, Math.floor(baseAttack - defense));
+      
+      roundResult = {
+        round: state.current_round,
+        attacker: playerFighter,
+        defender: opponentFighter,
+        attacker_action: ability.name,
+        damage: damage,
+        was_strategy_adherent: true,
+        morale_impact: 0,
+        new_attacker_hp: playerFighter.current_health,
+        new_defender_hp: opponentFighter.current_health - damage,
+        narrative_description: `${playerFighter.name} uses ${ability.name} for ${damage} damage!`
+      };
+
+      actions.set_current_announcement(roundResult.narrative_description);
+    }
+
+    // Update battle state with round results
+    const updatedBattleState = {
+      ...state.battle_state,
+      round_results: [...state.battle_state.round_results, roundResult],
+      current_round: state.current_round + 1
+    };
+    
+    actions.set_battle_state(updatedBattleState);
+    actions.set_current_round(state.current_round + 1);
+
+    // Check if battle is over
+    if (roundResult && roundResult.new_defender_hp <= 0) {
+      endBattle('player');
+    } else if (state.current_round >= 10) {
+      endBattle('draw');
+    } else {
+      // Continue to next round
+      timeout_manager.setTimeout(() => {
+        executeTeamRound();
+      }, 3000);
+    }
+  }, [state.battle_state, state.current_round, state.player_team, state.opponent_team, state.player_morale, state.opponent_morale]);
+
+  const endBattle = useCallback((winner: 'player' | 'opponent' | 'draw') => {
+    actions.set_phase('battle_complete');
+    
+    let endMessage = '';
+    if (winner === 'player') {
+      endMessage = `Victory! ${state.player_team.name} has triumphed through teamwork and strategy!`;
+      announce_victory(state.player_team.name, state.player_morale > 90);
+    } else if (winner === 'opponent') {
+      endMessage = `Defeat! ${state.opponent_team.name} has proven superior this day.`;
+      announce_defeat(state.player_team.name);
+    } else {
+      endMessage = 'The battle ends in a dramatic draw! Both teams showed incredible heart!';
+    }
+
+    actions.set_current_announcement(endMessage);
+    
+    // Show post-battle team chemistry effects
+    timeout_manager.setTimeout(() => {
+      const newChemistry = Math.max(0, Math.min(100, state.player_team.team_chemistry + (winner === 'player' ? 10 : -5)));
+      actions.set_player_team({ ...state.player_team, team_chemistry: newChemistry });
+      
+      const chemistryUpdate = `Post-battle team chemistry: ${Math.round(newChemistry * 10) / 10}% ${newChemistry > state.player_team.team_chemistry ? '(+)' : '(-)'}}`;
+      actions.set_current_announcement(chemistryUpdate);
+    }, 3000);
+  }, [state.player_team, state.opponent_team, state.player_morale]);
+
+  const proceedToRoundCombat = useCallback(() => {
+    actions.set_phase('combat');
+    actions.set_timer(null);
+    actions.set_is_timer_active(false);
+    const announcement = `Round ${state.current_round} begins! The warriors clash in epic combat!`;
+    actions.set_current_announcement(announcement);
+    announce_round_start(state.current_round);
+    
+    // Execute combat after a brief delay
+    timeout_manager.setTimeout(() => {
+      execute_combat_round();
+    }, 3000);
+  }, [state.current_round]);
+
+  const handleRoundEnd = useCallback((data: any) => {
+    // Handle round end data from WebSocket
+    if (data.winner) {
+      endBattle(data.winner);
+    } else {
+      // Continue to next round
+      actions.set_current_round(state.current_round + 1);
+      proceedToRoundCombat();
+    }
+  }, [state.current_round]);
+
+  const calculateBattleOutcome = useCallback((player_team: Team, opponent_team: Team) => {
+    const playerHP = player_team.characters.reduce((sum, char) => sum + char.current_health, 0);
+    const opponentHP = opponent_team.characters.reduce((sum, char) => sum + char.current_health, 0);
+    
+    if (playerHP <= 0 && opponentHP <= 0) {
+      return 'draw';
+    } else if (playerHP <= 0) {
+      return 'opponent';
+    } else if (opponentHP <= 0) {
+      return 'player';
+    } else {
+      // If both teams have HP, determine winner by remaining HP percentage
+      const playerHealthPercent = playerHP / player_team.characters.reduce((sum, char) => sum + char.max_health, 0);
+      const opponentHealthPercent = opponentHP / opponent_team.characters.reduce((sum, char) => sum + char.max_health, 0);
+      
+      if (playerHealthPercent > opponentHealthPercent) {
+        return 'player';
+      } else if (opponentHealthPercent > playerHealthPercent) {
+        return 'opponent';
+      } else {
+        return 'draw';
+      }
+    }
+  }, []);
+
+  const resetBattle = useCallback(() => {
+    actions.set_battle_state(null);
+    actions.set_current_round(1);
+    actions.set_current_match(1);
+    actions.setPlayerMorale(75);
+    actions.setOpponentMorale(75);
+    actions.set_player_match_wins(0);
+    actions.set_opponent_match_wins(0);
+    actions.set_player_round_wins(0);
+    actions.set_opponent_round_wins(0);
+    actions.set_phase('pre_battle_huddle');
+    actions.set_current_announcement('Welcome to the Arena! Choose your opponent to begin battle!');
+  }, []);
+
+  return {
+    startTeamBattle,
+    executeTeamRound,
+    endBattle,
+    proceedToRoundCombat,
+    handleRoundEnd,
+    calculateBattleOutcome,
+    resetBattle,
+    is_in_battle: state.battle_state !== null,
+    can_start_battle: state.phase === 'pre_battle_huddle' && state.selectedOpponent !== null
+  };
+};

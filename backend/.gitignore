@@ -1,0 +1,5 @@
+backend/bin/
+tools/3d-generation/venv312/
+dist/
+node_modules/
+src/types/generated.ts

@@ -1,0 +1,281 @@
+{
+  "kitchen": {
+    "context": "kitchen",
+    "characters": [
+      {
+        "character_id": "merlin",
+        "grid": "D1",
+        "current_position": {
+          "x": 15,
+          "y": 20,
+          "scale": 1.0
+        },
+        "recommended_position": {
+          "x": 20,
+          "y": 15,
+          "scale": 1.0
+        },
+        "current_anchor": "bottom",
+        "recommended_anchor": null,
+        "issues": [
+          {
+            "severity": "warning",
+            "category": "suboptimal_position",
+            "character_id": "merlin",
+            "description": "Bubble is 7.1% away from optimal position",
+            "current_value": "(15.0%, 20.0%)",
+            "recommended_fix": "Move to (20.0%, 15.0%)"
+          }
+        ]
+      },
+      {
+        "character_id": "achilles",
+        "grid": "B4",
+        "current_position": {
+          "x": 50,
+          "y": 10,
+          "scale": 1.0
+        },
+        "recommended_position": {
+          "x": 40,
+          "y": 35,
+          "scale": 1.0
+        },
+        "current_anchor": "bottom",
+        "recommended_anchor": "bottom-left",
+        "issues": [
+          {
+            "severity": "critical",
+            "category": "overlap",
+            "character_id": "achilles",
+            "description": "Bubble overlaps character sprite (covers character)",
+            "current_value": "Bubble at (50.0%, 10.0%)",
+            "recommended_fix": "Move bubble at least 15% away from character center"
+          },
+          {
+            "severity": "warning",
+            "category": "suboptimal_position",
+            "character_id": "achilles",
+            "description": "Bubble is 26.9% away from optimal position",
+            "current_value": "(50.0%, 10.0%)",
+            "recommended_fix": "Move to (40.0%, 35.0%)"
+          },
+          {
+            "severity": "warning",
+            "category": "wrong_anchor",
+            "character_id": "achilles",
+            "description": "Tail not pointing to mouth (using 'bottom')",
+            "current_value": "bottom",
+            "recommended_fix": "Change anchor to 'bottom-left'"
+          }
+        ]
+      },
+      {
+        "character_id": "cleopatra",
+        "grid": "C7",
+        "current_position": {
+          "x": 75,
+          "y": 20,
+          "scale": 1.0
+        },
+        "recommended_position": {
+          "x": 70,
+          "y": 5,
+          "scale": 1.0
+        },
+        "current_anchor": "bottom",
+        "recommended_anchor": null,
+        "issues": [
+          {
+            "severity": "critical",
+            "category": "overlap",
+            "character_id": "cleopatra",
+            "description": "Bubble overlaps character sprite (covers character)",
+            "current_value": "Bubble at (75.0%, 20.0%)",
+            "recommended_fix": "Move bubble at least 15% away from character center"
+          },
+          {
+            "severity": "warning",
+            "category": "suboptimal_position",
+            "character_id": "cleopatra",
+            "description": "Bubble is 15.8% away from optimal position",
+            "current_value": "(75.0%, 20.0%)",
+            "recommended_fix": "Move to (70.0%, 5.0%)"
+          }
+        ]
+      },
+      {
+        "character_id": "joan",
+        "grid": "H6",
+        "current_position": {
+          "x": 65,
+          "y": 45,
+          "scale": 1.0
+        },
+        "recommended_position": {
+          "x": 60,
+          "y": 55,
+          "scale": 1.0
+        },
+        "current_anchor": "bottom",
+        "recommended_anchor": null,
+        "issues": [
+          {
+            "severity": "warning",
+            "category": "suboptimal_position",
+            "character_id": "joan",
+            "description": "Bubble is 11.2% away from optimal position",
+            "current_value": "(65.0%, 45.0%)",
+            "recommended_fix": "Move to (60.0%, 55.0%)"
+          }
+        ]
+      },
+      {
+        "character_id": "dracula",
+        "grid": "H2",
+        "current_position": {
+          "x": 25,
+          "y": 45,
+          "scale": 1.0
+        },
+        "recommended_position": {
+          "x": 30,
+          "y": 55,
+          "scale": 1.0
+        },
+        "current_anchor": "bottom",
+        "recommended_anchor": null,
+        "issues": [
+          {
+            "severity": "warning",
+            "category": "suboptimal_position",
+            "character_id": "dracula",
+            "description": "Bubble is 11.2% away from optimal position",
+            "current_value": "(25.0%, 45.0%)",
+            "recommended_fix": "Move to (30.0%, 55.0%)"
+          }
+        ]
+      }
+    ],
+    "issues": [
+      {
+        "severity": "warning",
+        "category": "suboptimal_position",
+        "character_id": "merlin",
+        "description": "Bubble is 7.1% away from optimal position",
+        "current_value": "(15.0%, 20.0%)",
+        "recommended_fix": "Move to (20.0%, 15.0%)"
+      },
+      {
+        "severity": "critical",
+        "category": "overlap",
+        "character_id": "achilles",
+        "description": "Bubble overlaps character sprite (covers character)",
+        "current_value": "Bubble at (50.0%, 10.0%)",
+        "recommended_fix": "Move bubble at least 15% away from character center"
+      },
+      {
+        "severity": "warning",
+        "category": "suboptimal_position",
+        "character_id": "achilles",
+        "description": "Bubble is 26.9% away from optimal position",
+        "current_value": "(50.0%, 10.0%)",
+        "recommended_fix": "Move to (40.0%, 35.0%)"
+      },
+      {
+        "severity": "warning",
+        "category": "wrong_anchor",
+        "character_id": "achilles",
+        "description": "Tail not pointing to mouth (using 'bottom')",
+        "current_value": "bottom",
+        "recommended_fix": "Change anchor to 'bottom-left'"
+      },
+      {
+        "severity": "critical",
+        "category": "overlap",
+        "character_id": "cleopatra",
+        "description": "Bubble overlaps character sprite (covers character)",
+        "current_value": "Bubble at (75.0%, 20.0%)",
+        "recommended_fix": "Move bubble at least 15% away from character center"
+      },
+      {
+        "severity": "warning",
+        "category": "suboptimal_position",
+        "character_id": "cleopatra",
+        "description": "Bubble is 15.8% away from optimal position",
+        "current_value": "(75.0%, 20.0%)",
+        "recommended_fix": "Move to (70.0%, 5.0%)"
+      },
+      {
+        "severity": "warning",
+        "category": "suboptimal_position",
+        "character_id": "joan",
+        "description": "Bubble is 11.2% away from optimal position",
+        "current_value": "(65.0%, 45.0%)",
+        "recommended_fix": "Move to (60.0%, 55.0%)"
+      },
+      {
+        "severity": "warning",
+        "category": "suboptimal_position",
+        "character_id": "dracula",
+        "description": "Bubble is 11.2% away from optimal position",
+        "current_value": "(25.0%, 45.0%)",
+        "recommended_fix": "Move to (30.0%, 55.0%)"
+      }
+    ],
+    "code_fixes": {
+      "getFallbackPosition": {
+        "merlin": {
+          "x": 20,
+          "y": 15
+        },
+        "achilles": {
+          "x": 40,
+          "y": 35
+        },
+        "cleopatra": {
+          "x": 70,
+          "y": 5
+        },
+        "joan": {
+          "x": 60,
+          "y": 55
+        },
+        "dracula": {
+          "x": 30,
+          "y": 55
+        }
+      },
+      "getSmartSpoutPosition": {
+        "achilles": {
+          "anchor_point": "bottom-left"
+        }
+      }
+    }
+  },
+  "confessional": {
+    "context": "confessional",
+    "recommended_position": {
+      "x": 35,
+      "y": 30,
+      "scale": 1.0
+    },
+    "recommended_anchor": "bottom",
+    "character_position": {
+      "x": 30,
+      "y": 50,
+      "scale": 1.2
+    },
+    "interviewer_position": {
+      "x": 80,
+      "y": 50,
+      "scale": 0.8
+    }
+  },
+  "summary": {
+    "total_issues": 8,
+    "critical": 2,
+    "warnings": 6,
+    "timestamp": "2025-11-26"
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "name": "@blankwars/hex-engine",
+  "version": "1.0.0",
+  "description": "Shared hex grid system and movement engine for Blank Wars battles",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "echo \"No tests yet\" && exit 0"
+  },
+  "keywords": ["hex", "grid", "battle", "movement"],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "typescript": "^5.8.3"
+  }
+}

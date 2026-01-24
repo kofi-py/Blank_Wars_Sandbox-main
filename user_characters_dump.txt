@@ -1,0 +1,251 @@
+                                                                                                                                        Table "public.user_characters"
+            Column            |            Type             | Collation | Nullable |                                                                                                          Default                                                                                                          
+------------------------------+-----------------------------+-----------+----------+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ id                           | text                        |           | not null | 
+ user_id                      | text                        |           | not null | 
+ character_id                 | text                        |           | not null | 
+ serial_number                | text                        |           |          | 
+ nickname                     | text                        |           |          | 
+ level                        | integer                     |           |          | 1
+ experience                   | integer                     |           |          | 0
+ bond_level                   | integer                     |           | not null | 0
+ total_battles                | integer                     |           |          | 0
+ total_wins                   | integer                     |           |          | 0
+ current_health               | integer                     |           | not null | 
+ is_injured                   | boolean                     |           |          | false
+ injury_severity              | text                        |           |          | 'healthy'::text
+ is_dead                      | boolean                     |           |          | false
+ death_timestamp              | timestamp without time zone |           |          | 
+ recovery_time                | timestamp without time zone |           |          | 
+ resurrection_available_at    | timestamp without time zone |           |          | 
+ death_count                  | integer                     |           |          | 0
+ pre_death_level              | integer                     |           |          | 
+ pre_death_experience         | integer                     |           |          | 
+ equipment                    | text                        |           |          | '[]'::text
+ enhancements                 | text                        |           |          | '[]'::text
+ conversation_memory          | text                        |           |          | '[]'::text
+ significant_memories         | text                        |           |          | '[]'::text
+ personality_drift            | text                        |           |          | '{}'::text
+ wallet                       | integer                     |           | not null | 0
+ acquired_at                  | timestamp without time zone |           |          | CURRENT_TIMESTAMP
+ last_battle_at               | timestamp without time zone |           |          | 
+ current_mental_health        | integer                     |           | not null | 80
+ current_stress               | integer                     |           |          | 25
+ team_trust                   | integer                     |           |          | 85
+ battle_focus                 | integer                     |           |          | 90
+ current_training             | integer                     |           | not null | 75
+ current_team_player          | integer                     |           | not null | 70
+ current_ego                  | integer                     |           | not null | 60
+ current_communication        | integer                     |           |          | 80
+ current_fatigue              | integer                     |           |          | 0
+ current_morale               | integer                     |           |          | 80
+ starter_gear_given           | boolean                     |           |          | false
+ level_bonus_attack           | integer                     |           |          | 0
+ level_bonus_defense          | integer                     |           |          | 0
+ level_bonus_speed            | integer                     |           |          | 0
+ level_bonus_max_health       | integer                     |           |          | 0
+ level_bonus_special          | integer                     |           |          | 0
+ agent_key                    | character varying(50)       |           |          | 
+ debt                         | integer                     |           | not null | 0
+ monthly_earnings             | integer                     |           | not null | 0
+ financial_personality        | jsonb                       |           |          | 
+ recent_decisions             | jsonb                       |           | not null | '[]'::jsonb
+ sleeping_arrangement         | character varying(50)       |           |          | 'floor'::character varying
+ gameplan_adherence_level     | integer                     |           |          | 
+ current_confidence           | integer                     |           |          | 50
+ skill_points_deprecated      | integer                     |           |          | 0
+ archetype_points_deprecated  | integer                     |           |          | 0
+ species_points_deprecated    | integer                     |           |          | 0
+ signature_points_deprecated  | integer                     |           |          | 0
+ current_energy               | integer                     |           |          | 100
+ current_max_energy           | integer                     |           |          | 100
+ current_mana                 | integer                     |           |          | 100
+ current_max_mana             | integer                     |           |          | 100
+ energy_regen_rate            | integer                     |           |          | 10
+ mana_regen_rate              | integer                     |           |          | 10
+ ability_points               | integer                     |           |          | 0
+ current_attack               | integer                     |           |          | 
+ current_defense              | integer                     |           |          | 
+ current_speed                | integer                     |           |          | 
+ current_special              | integer                     |           |          | 
+ current_max_health           | integer                     |           |          | 
+ equipment_budget             | integer                     |           |          | 0
+ consumables_budget           | integer                     |           |          | 0
+ debt_principal               | integer                     |           |          | 0
+ headquarters_id              | text                        |           |          | 
+ total_losses                 | integer                     |           |          | 0
+ win_percentage               | real                        |           |          | 0.0
+ attribute_points             | integer                     |           |          | 0
+ attribute_allocations        | jsonb                       |           |          | '{}'::jsonb
+ attribute_pending_survey     | jsonb                       |           |          | 
+ financial_stress             | integer                     |           |          | generated always as (LEAST(100::numeric, GREATEST(0::numeric, round(COALESCE((financial_personality ->> 'luxury_desire'::text)::numeric, 50::numeric) * 0.2 +                                                            +
+                              |                             |           |          | CASE                                                                                                                                                                                                                     +
+                              |                             |           |          |     WHEN COALESCE((financial_personality ->> 'financial_wisdom'::text)::numeric, 50::numeric) < 30::numeric THEN 10                                                                                                      +
+                              |                             |           |          |     ELSE 0                                                                                                                                                                                                               +
+                              |                             |           |          | END::numeric +                                                                                                                                                                                                           +
+                              |                             |           |          | CASE                                                                                                                                                                                                                     +
+                              |                             |           |          |     WHEN COALESCE(financial_personality ->> 'spending_style'::text, 'moderate'::text) = 'conservative'::text THEN 15                                                                                                     +
+                              |                             |           |          |     ELSE 0                                                                                                                                                                                                               +
+                              |                             |           |          | END::numeric)))) stored
+ weight_class                 | integer                     |           |          | generated always as (level * 10 + total_battles / 5) stored
+ coach_lockout_until          | timestamp with time zone    |           |          | 
+ current_win_streak           | integer                     |           |          | 0
+ best_win_streak              | integer                     |           |          | 0
+ resource_points              | integer                     |           |          | 0
+ resource_allocations         | jsonb                       |           |          | '{}'::jsonb
+ resource_pending_survey      | jsonb                       |           |          | 
+ confidence_level             | integer                     |           |          | 50
+ max_energy                   | integer                     |           |          | 100
+ max_mana                     | integer                     |           |          | 100
+ current_magic_attack         | integer                     |           |          | 50
+ current_magic_defense        | integer                     |           |          | 50
+ current_dexterity            | integer                     |           |          | 50
+ current_intelligence         | integer                     |           |          | 50
+ current_wisdom               | integer                     |           |          | 50
+ current_spirit               | integer                     |           |          | 50
+ current_initiative           | integer                     |           |          | 50
+ current_elemental_resistance | integer                     |           |          | 0
+ current_fire_resistance      | integer                     |           |          | 50
+ current_cold_resistance      | integer                     |           |          | 50
+ current_lightning_resistance | integer                     |           |          | 50
+ current_toxic_resistance     | integer                     |           |          | 50
+ gameplay_mood_modifiers      | jsonb                       |           |          | '{"modifiers": []}'::jsonb
+ coach_trust_level            | integer                     |           |          | generated always as (LEAST(100::numeric, GREATEST(0::numeric, round(COALESCE(bond_level, 0)::numeric * 0.6 +                                                                                                             +
+                              |                             |           |          | CASE                                                                                                                                                                                                                     +
+                              |                             |           |          |     WHEN COALESCE(total_battles, 0) = 0 THEN 12.5                                                                                                                                                                        +
+                              |                             |           |          |     ELSE COALESCE(total_wins, 0)::numeric / NULLIF(COALESCE(total_battles, 0), 0)::numeric * 25::numeric                                                                                                                 +
+                              |                             |           |          | END + (7.5 +                                                                                                                                                                                                             +
+                              |                             |           |          | CASE                                                                                                                                                                                                                     +
+                              |                             |           |          |     WHEN COALESCE(financial_personality ->> 'spending_style'::text, 'moderate'::text) = 'strategic'::text THEN 3                                                                                                         +
+                              |                             |           |          |     ELSE 0                                                                                                                                                                                                               +
+                              |                             |           |          | END::numeric +                                                                                                                                                                                                           +
+                              |                             |           |          | CASE                                                                                                                                                                                                                     +
+                              |                             |           |          |     WHEN COALESCE(financial_personality ->> 'spending_style'::text, 'moderate'::text) = 'impulsive'::text THEN '-3'::integer                                                                                             +
+                              |                             |           |          |     ELSE 0                                                                                                                                                                                                               +
+                              |                             |           |          | END::numeric + (COALESCE((financial_personality ->> 'financial_wisdom'::text)::numeric, 50::numeric) - 50::numeric) * 0.06))))) stored
+ gameplan_adherence           | integer                     |           |          | generated always as (LEAST(100::numeric, GREATEST(0::numeric, round(current_training::numeric + current_mental_health::numeric * 0.4 + current_team_player::numeric * 0.3 + (100 - current_ego)::numeric * 0.2)))) stored
+Indexes:
+    "user_characters_pkey" PRIMARY KEY, btree (id)
+    "idx_uc_current_energy" btree (current_energy)
+    "idx_uc_current_fatigue" btree (current_fatigue)
+    "idx_uc_current_initiative" btree (current_initiative)
+    "idx_uc_current_magic_attack" btree (current_magic_attack)
+    "idx_uc_current_mana" btree (current_mana)
+    "idx_uc_current_morale" btree (current_morale)
+    "idx_uc_current_stress" btree (current_stress)
+    "idx_user_characters_best_win_streak" btree (best_win_streak DESC)
+    "idx_user_characters_character_id" btree (character_id)
+    "idx_user_characters_character_points" btree (ability_points)
+    "idx_user_characters_current_win_streak" btree (current_win_streak DESC)
+    "idx_user_characters_energy" btree (current_energy)
+    "idx_user_characters_is_dead" btree (is_dead)
+    "idx_user_characters_level_bonuses" btree (level_bonus_attack, level_bonus_defense, level_bonus_speed, level_bonus_max_health)
+    "idx_user_characters_lockout" btree (coach_lockout_until)
+    "idx_user_characters_mana" btree (current_mana)
+    "idx_user_characters_mood_modifiers" gin (gameplay_mood_modifiers)
+    "idx_user_characters_nickname" btree (nickname)
+    "idx_user_characters_psychstats" btree (current_mental_health, current_stress, current_fatigue, current_morale)
+    "idx_user_characters_resource_points" btree (resource_points)
+    "idx_user_characters_resurrection" btree (resurrection_available_at)
+    "idx_user_characters_serial" btree (serial_number)
+    "idx_user_characters_user_id" btree (user_id)
+    "idx_user_characters_weight_class" btree (weight_class)
+    "user_characters_serial_number_key" UNIQUE CONSTRAINT, btree (serial_number)
+    "ux_uc_user_char" UNIQUE, btree (user_id, character_id)
+Check constraints:
+    "chk_bond_level_nonneg" CHECK (bond_level >= 0)
+    "chk_debt_nonneg" CHECK (debt >= 0)
+    "chk_financial_personality_is_object" CHECK (jsonb_typeof(financial_personality) = 'object'::text)
+    "chk_monthly_earnings_nonneg" CHECK (monthly_earnings >= 0)
+    "chk_recent_decisions_is_array" CHECK (jsonb_typeof(recent_decisions) = 'array'::text)
+    "chk_wallet_nonneg" CHECK (wallet >= 0)
+    "user_characters_archetype_points_check" CHECK (archetype_points_deprecated >= 0)
+    "user_characters_battle_focus_check" CHECK (battle_focus >= 0)
+    "user_characters_best_win_streak_check" CHECK (best_win_streak >= 0)
+    "user_characters_character_points_check" CHECK (ability_points >= 0)
+    "user_characters_coach_trust_check" CHECK (coach_trust_level >= 0 AND coach_trust_level <= 100)
+    "user_characters_confidence_level_check" CHECK (confidence_level >= 0)
+    "user_characters_confidence_level_check1" CHECK (confidence_level >= 0 AND confidence_level <= 100)
+    "user_characters_current_communication_check" CHECK (current_communication >= 0)
+    "user_characters_current_ego_check" CHECK (current_ego >= 0)
+    "user_characters_current_mental_health_check" CHECK (current_mental_health >= 0)
+    "user_characters_current_team_player_check" CHECK (current_team_player >= 0)
+    "user_characters_current_training_check" CHECK (current_training >= 0)
+    "user_characters_current_win_streak_check" CHECK (current_win_streak >= 0)
+    "user_characters_financial_stress_check" CHECK (financial_stress >= 0 AND financial_stress <= 100)
+    "user_characters_gameplan_adherence_check" CHECK (gameplan_adherence >= 0 AND gameplan_adherence <= 100)
+    "user_characters_injury_severity_check" CHECK (injury_severity = ANY (ARRAY['healthy'::text, 'light'::text, 'moderate'::text, 'severe'::text, 'critical'::text, 'dead'::text]))
+    "user_characters_level_bonus_attack_check" CHECK (level_bonus_attack >= 0)
+    "user_characters_level_bonus_defense_check" CHECK (level_bonus_defense >= 0)
+    "user_characters_level_bonus_max_health_check" CHECK (level_bonus_max_health >= 0)
+    "user_characters_level_bonus_special_check" CHECK (level_bonus_special >= 0)
+    "user_characters_level_bonus_speed_check" CHECK (level_bonus_speed >= 0)
+    "user_characters_resurrection_check" CHECK (resurrection_available_at IS NULL OR is_dead = true)
+    "user_characters_signature_points_check" CHECK (signature_points_deprecated >= 0)
+    "user_characters_skill_points_check" CHECK (skill_points_deprecated >= 0)
+    "user_characters_species_points_check" CHECK (species_points_deprecated >= 0)
+    "user_characters_team_trust_check" CHECK (team_trust >= 0)
+    "user_characters_total_losses_check" CHECK (total_losses >= 0)
+    "user_characters_wallet_check" CHECK (wallet >= 0)
+    "user_characters_win_percentage_check" CHECK (win_percentage >= 0.0::double precision AND win_percentage <= 100.0::double precision)
+Foreign-key constraints:
+    "user_characters_character_id_fkey" FOREIGN KEY (character_id) REFERENCES characters(id)
+    "user_characters_user_id_fkey" FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+Referenced by:
+    TABLE "battles" CONSTRAINT "battles_opponent_character_id_fkey" FOREIGN KEY (opponent_character_id) REFERENCES user_characters(id)
+    TABLE "battles" CONSTRAINT "battles_user_character_id_fkey" FOREIGN KEY (user_character_id) REFERENCES user_characters(id)
+    TABLE "bond_activity_log" CONSTRAINT "bond_activity_log_user_character_id_fkey" FOREIGN KEY (user_character_id) REFERENCES user_characters(id) ON DELETE CASCADE
+    TABLE "cardano_nft_metadata" CONSTRAINT "cardano_nft_metadata_user_character_id_fkey" FOREIGN KEY (user_character_id) REFERENCES user_characters(id) ON DELETE CASCADE
+    TABLE "cardano_staking_positions" CONSTRAINT "cardano_staking_positions_user_character_id_fkey" FOREIGN KEY (user_character_id) REFERENCES user_characters(id)
+    TABLE "challenge_alliances" CONSTRAINT "challenge_alliances_leader_character_id_fkey" FOREIGN KEY (leader_character_id) REFERENCES user_characters(id)
+    TABLE "challenge_leaderboard" CONSTRAINT "challenge_leaderboard_user_character_id_fkey" FOREIGN KEY (user_character_id) REFERENCES user_characters(id) ON DELETE CASCADE
+    TABLE "challenge_participants" CONSTRAINT "challenge_participants_user_character_id_fkey" FOREIGN KEY (user_character_id) REFERENCES user_characters(id) ON DELETE CASCADE
+    TABLE "challenge_results" CONSTRAINT "challenge_results_second_place_character_id_fkey" FOREIGN KEY (second_place_character_id) REFERENCES user_characters(id)
+    TABLE "challenge_results" CONSTRAINT "challenge_results_third_place_character_id_fkey" FOREIGN KEY (third_place_character_id) REFERENCES user_characters(id)
+    TABLE "challenge_results" CONSTRAINT "challenge_results_winner_character_id_fkey" FOREIGN KEY (winner_character_id) REFERENCES user_characters(id)
+    TABLE "character_abilities" CONSTRAINT "character_abilities_character_id_fkey" FOREIGN KEY (character_id) REFERENCES user_characters(id) ON DELETE CASCADE
+    TABLE "character_decisions" CONSTRAINT "character_decisions_character_id_fkey" FOREIGN KEY (character_id) REFERENCES user_characters(id) ON DELETE CASCADE
+    TABLE "character_experience_log" CONSTRAINT "character_experience_log_character_id_fkey" FOREIGN KEY (character_id) REFERENCES user_characters(id) ON DELETE CASCADE
+    TABLE "character_healing_sessions" CONSTRAINT "character_healing_sessions_character_id_fkey" FOREIGN KEY (character_id) REFERENCES user_characters(id) ON DELETE CASCADE
+    TABLE "character_modifiers" CONSTRAINT "character_modifiers_user_character_id_fkey" FOREIGN KEY (user_character_id) REFERENCES user_characters(id) ON DELETE CASCADE
+    TABLE "character_power_loadout" CONSTRAINT "character_power_loadout_user_character_id_fkey" FOREIGN KEY (user_character_id) REFERENCES user_characters(id) ON DELETE CASCADE
+    TABLE "character_powers" CONSTRAINT "character_powers_character_id_fkey" FOREIGN KEY (character_id) REFERENCES user_characters(id) ON DELETE CASCADE
+    TABLE "character_progression" CONSTRAINT "character_progression_character_id_fkey" FOREIGN KEY (character_id) REFERENCES user_characters(id) ON DELETE CASCADE
+    TABLE "character_skills" CONSTRAINT "character_skills_character_id_fkey" FOREIGN KEY (character_id) REFERENCES user_characters(id) ON DELETE CASCADE
+    TABLE "character_spell_loadout" CONSTRAINT "character_spell_loadout_user_character_id_fkey" FOREIGN KEY (user_character_id) REFERENCES user_characters(id) ON DELETE CASCADE
+    TABLE "character_spells" CONSTRAINT "character_spells_character_id_fkey" FOREIGN KEY (character_id) REFERENCES user_characters(id) ON DELETE CASCADE
+    TABLE "character_temporary_buffs" CONSTRAINT "character_temporary_buffs_character_id_fkey" FOREIGN KEY (character_id) REFERENCES user_characters(id) ON DELETE CASCADE
+    TABLE "chat_messages" CONSTRAINT "chat_messages_character_id_fkey" FOREIGN KEY (character_id) REFERENCES user_characters(id)
+    TABLE "coach_xp_events" CONSTRAINT "coach_xp_events_character_id_fkey" FOREIGN KEY (character_id) REFERENCES user_characters(id)
+    TABLE "financial_decisions" CONSTRAINT "financial_decisions_user_character_id_fkey" FOREIGN KEY (user_character_id) REFERENCES user_characters(id) ON DELETE CASCADE
+    TABLE "graffiti_art" CONSTRAINT "graffiti_art_artist_character_id_fkey" FOREIGN KEY (artist_character_id) REFERENCES user_characters(id) ON DELETE SET NULL
+    TABLE "guild_messages" CONSTRAINT "guild_messages_sender_character_id_fkey" FOREIGN KEY (sender_character_id) REFERENCES user_characters(id) ON DELETE SET NULL
+    TABLE "influencer_mints" CONSTRAINT "influencer_mints_user_character_id_fkey" FOREIGN KEY (user_character_id) REFERENCES user_characters(id)
+    TABLE "locker_auction_sessions" CONSTRAINT "locker_auction_sessions_character_id_fkey" FOREIGN KEY (character_id) REFERENCES user_characters(id) ON DELETE CASCADE
+    TABLE "locker_leaderboards" CONSTRAINT "locker_leaderboards_character_id_fkey" FOREIGN KEY (character_id) REFERENCES user_characters(id) ON DELETE CASCADE
+    TABLE "locker_rogue_decisions" CONSTRAINT "locker_rogue_decisions_character_id_fkey" FOREIGN KEY (character_id) REFERENCES user_characters(id) ON DELETE CASCADE
+    TABLE "lounge_messages" CONSTRAINT "lounge_messages_sender_character_id_fkey" FOREIGN KEY (sender_character_id) REFERENCES user_characters(id) ON DELETE SET NULL
+    TABLE "lounge_presence" CONSTRAINT "lounge_presence_character_id_fkey" FOREIGN KEY (character_id) REFERENCES user_characters(id) ON DELETE CASCADE
+    TABLE "power_unlock_log" CONSTRAINT "power_unlock_log_character_id_fkey" FOREIGN KEY (character_id) REFERENCES user_characters(id) ON DELETE CASCADE
+    TABLE "social_message_replies" CONSTRAINT "social_message_replies_author_character_id_fkey" FOREIGN KEY (author_character_id) REFERENCES user_characters(id) ON DELETE CASCADE
+    TABLE "social_messages" CONSTRAINT "social_messages_author_character_id_fkey" FOREIGN KEY (author_character_id) REFERENCES user_characters(id) ON DELETE CASCADE
+    TABLE "social_messages" CONSTRAINT "social_messages_target_character_id_fkey" FOREIGN KEY (target_character_id) REFERENCES user_characters(id) ON DELETE SET NULL
+Triggers:
+    trg_init_user_character_stats AFTER INSERT ON user_characters FOR EACH ROW EXECUTE FUNCTION initialize_user_character_stats()
+    trigger_auto_unlock_starters AFTER INSERT ON user_characters FOR EACH ROW EXECUTE FUNCTION auto_unlock_starters()
+
+                          Table "public.character_progression"
+     Column     |            Type             | Collation | Nullable |      Default      
+----------------+-----------------------------+-----------+----------+-------------------
+ character_id   | text                        |           | not null | 
+ stat_points    | integer                     |           |          | 0
+ skill_points   | integer                     |           |          | 0
+ ability_points | integer                     |           |          | 0
+ tier           | text                        |           |          | 'novice'::text
+ title          | text                        |           |          | 'Novice'::text
+ last_updated   | timestamp without time zone |           |          | CURRENT_TIMESTAMP
+Indexes:
+    "character_progression_pkey" PRIMARY KEY, btree (character_id)
+Foreign-key constraints:
+    "character_progression_character_id_fkey" FOREIGN KEY (character_id) REFERENCES user_characters(id) ON DELETE CASCADE
+

@@ -1,0 +1,9 @@
+{
+  "name": "blank-beast-ball",
+  "version": "1.0.0",
+  "description": "A chaotic obstacle course game where beast characters navigate through falling beasts in ball form",
+  "main": "game.js",
+  "dependencies": {
+    "puppeteer": "^24.26.0"
+  }
+}

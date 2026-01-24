@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Model Inspector</title>
+</head>
+<body>
+    <h1>Model Comparison</h1>
+    <div id="output"></div>
+
+    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/loaders/GLTFLoader.js"></script>
+    <script>
+        const loader = new THREE.GLTFLoader();
+        const output = document.getElementById('output');
+
+        function inspectModel(path, name) {
+            loader.load(path, (gltf) => {
+                const scene = gltf.scene;
+                const box = new THREE.Box3().setFromObject(scene);
+                const size = box.getSize(new THREE.Vector3());
+                const center = box.getCenter(new THREE.Vector3());
+                const min = box.min;
+                const max = box.max;
+
+                output.innerHTML += `<h2>${name}</h2>`;
+                output.innerHTML += `<p>Size: ${size.x.toFixed(4)} x ${size.y.toFixed(4)} x ${size.z.toFixed(4)}</p>`;
+                output.innerHTML += `<p>Center: (${center.x.toFixed(4)}, ${center.y.toFixed(4)}, ${center.z.toFixed(4)})</p>`;
+                output.innerHTML += `<p>Min: (${min.x.toFixed(4)}, ${min.y.toFixed(4)}, ${min.z.toFixed(4)})</p>`;
+                output.innerHTML += `<p>Max: (${max.x.toFixed(4)}, ${max.y.toFixed(4)}, ${max.z.toFixed(4)})</p>`;
+                output.innerHTML += `<p>Animations: ${gltf.animations.length}</p>`;
+
+                // Check mesh count and vertices
+                let meshCount = 0;
+                let totalVertices = 0;
+                scene.traverse((child) => {
+                    if (child.isMesh) {
+                        meshCount++;
+                        if (child.geometry) {
+                            const posAttr = child.geometry.attributes.position;
+                            if (posAttr) totalVertices += posAttr.count;
+                        }
+                    }
+                });
+                output.innerHTML += `<p>Meshes: ${meshCount}, Total vertices: ${totalVertices}</p>`;
+                output.innerHTML += '<hr>';
+            }, undefined, (error) => {
+                output.innerHTML += `<p>Error loading ${name}: ${error}</p>`;
+            });
+        }
+
+        inspectModel('models/achilles.glb', 'Original achilles.glb');
+        inspectModel('models/achilles_idle.glb', 'New achilles_idle.glb');
+    </script>
+</body>
+</html>

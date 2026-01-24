@@ -1,0 +1,696 @@
+// Battle Flow Coordinator
+// Wires together all the adherence system components into the actual battle flow
+
+import { type BattleState, type BattleCharacter, type StatusEffect } from '@/data/battleFlow';
+import { type PlannedAction } from '@/components/battle/CharacterActionPlanner';
+import { executeTurn, type TurnExecutionResult } from './turnExecutionCoordinator';
+import {
+  setCharacterPlan,
+  getCharacterPlan,
+  decrementCooldowns,
+  setPowerCooldown,
+  setSpellCooldown
+} from './battlePlanManager';
+
+/**
+ * Execute a complete round of battle (all characters take turns)
+ */
+export function executeRound(
+  battle_state: BattleState
+): {
+  updated_battle_state: BattleState;
+  turn_results: TurnExecutionResult[];
+  roundSummary: string;
+} {
+  const turn_results: TurnExecutionResult[] = [];
+  let currentState = battle_state;
+
+  // Determine turn order based on character speed
+  const turnOrder = calculateTurnOrder(currentState);
+
+  // Execute each character's turn
+  for (const { character_id, team } of turnOrder) {
+    const character = findCharacter(currentState, character_id);
+    if (!character || character.current_health <= 0) continue;
+
+    const plan = getCharacterPlan(currentState, character_id);
+
+    // Execute turn with adherence system
+    const battle_context = {
+      team_winning: team === 'player'
+        ? currentState.teams.player.current_morale > currentState.teams.opponent.current_morale
+        : currentState.teams.opponent.current_morale > currentState.teams.player.current_morale,
+      teammates_alive: getTeammatesAliveCount(currentState, team),
+      teammates_total: team === 'player' ? currentState.teams.player.characters.length : currentState.teams.opponent.characters.length,
+      round_number: currentState.current_round
+    };
+
+    const turnResult = executeTurn(character, plan, currentState, battle_context);
+    turn_results.push(turnResult);
+
+    // Apply turn results to state
+    currentState = applyTurnResults(currentState, turnResult);
+  }
+
+  // Decrement cooldowns at end of round
+  currentState = decrementCooldowns(currentState);
+
+  // Increment round number
+  currentState = {
+    ...currentState,
+    current_round: currentState.current_round + 1
+  };
+
+  const roundSummary = generateRoundSummary(turn_results);
+
+  return {
+    updated_battle_state: currentState,
+    turn_results,
+    roundSummary
+  };
+}
+
+/**
+ * Calculate turn order based on speed
+ */
+function calculateTurnOrder(battle_state: BattleState): Array<{ character_id: string; team: 'player' | 'opponent' }> {
+  const allCharacters = [
+    ...battle_state.teams.player.characters.map(c => ({
+      id: c.character.id,
+      speed: c.character.speed,
+      team: 'player' as const
+    })),
+    ...battle_state.teams.opponent.characters.map(c => ({
+      id: c.character.id,
+      speed: c.character.speed,
+      team: 'opponent' as const
+    }))
+  ];
+
+  return allCharacters
+    .filter(c => {
+      const char = findCharacter(battle_state, c.id);
+      return char && char.current_health > 0;
+    })
+    .sort((a, b) => b.speed - a.speed)
+    .map(c => ({ character_id: c.id, team: c.team }));
+}
+
+/**
+ * Find a character in battle state
+ */
+function findCharacter(battle_state: BattleState, character_id: string): BattleCharacter | null {
+  const playerChar = battle_state.teams.player.characters.find(c => c.character.id === character_id);
+  if (playerChar) return playerChar;
+
+  const opponentChar = battle_state.teams.opponent.characters.find(c => c.character.id === character_id);
+  return opponentChar || null;
+}
+
+/**
+ * Get count of alive teammates
+ */
+function getTeammatesAliveCount(battle_state: BattleState, team: 'player' | 'opponent'): number {
+  const teamChars = team === 'player'
+    ? battle_state.teams.player.characters
+    : battle_state.teams.opponent.characters;
+
+  return teamChars.filter(c => c.current_health > 0).length;
+}
+
+/**
+ * Apply turn results to battle state
+ */
+function applyTurnResults(
+  battle_state: BattleState,
+  turn_result: TurnExecutionResult
+): BattleState {
+  let updatedState = { ...battle_state };
+
+  // Find the actor and target
+  const actor = findCharacter(updatedState, turn_result.character_id);
+  const target_id = turn_result.actual_action.target_id;
+  const target = target_id ? findCharacter(updatedState, target_id) : null;
+
+  // Apply action effects (damage, healing, etc.)
+  if (turn_result.actual_action.type === 'move') {
+    // Update character position on hex grid
+    // TODO: Implement hex grid position tracking
+  } else if (turn_result.actual_action.type === 'attack' || turn_result.actual_action.type === 'power' || turn_result.actual_action.type === 'spell') {
+    if (actor) {
+      // Get ability definition to check for special effects
+      let ability: any = null;
+      if (turn_result.actual_action.type === 'power' && turn_result.actual_action.ability_id) {
+        ability = actor.unlocked_powers.find(p => p.id === turn_result.actual_action.ability_id);
+      } else if (turn_result.actual_action.type === 'spell' && turn_result.actual_action.ability_id) {
+        ability = actor.unlocked_spells.find(s => s.id === turn_result.actual_action.ability_id);
+      }
+
+      // Check for AOE effects
+      const aoeEffect = ability?.effects?.find((e: any) => e.type === 'aoe' || e.target === 'all_enemies' || e.target === 'all_allies');
+      const healingEffect = ability?.effects?.find((e: any) => e.type === 'heal' || e.type === 'healing');
+
+      if (aoeEffect) {
+        // Apply to all valid targets
+        const targets = getAOETargets(updatedState, actor, aoeEffect, turn_result.character_id);
+        for (const aoeTarget of targets) {
+          if (healingEffect) {
+            // AOE healing
+            updatedState = applyHealingToCharacter(updatedState, aoeTarget.character.id, healingEffect.value || 0);
+          } else {
+            // AOE damage
+            const damageResult = calculateDamage(actor, aoeTarget, turn_result.actual_action);
+            if (!damageResult.dodged) {
+              updatedState = applyDamageToCharacter(updatedState, aoeTarget.character.id, damageResult.damage);
+              if (damageResult.is_crit) {
+                updatedState = incrementCritHits(updatedState, turn_result.character_id);
+              }
+            }
+          }
+        }
+      } else if (healingEffect) {
+        // Single target healing
+        if (target_id) {
+          updatedState = applyHealingToCharacter(updatedState, target_id, healingEffect.value || 0);
+        }
+      } else if (target_id && target) {
+        // Single target damage
+        const damageResult = calculateDamage(actor, target, turn_result.actual_action);
+
+        if (!damageResult.dodged) {
+          updatedState = applyDamageToCharacter(updatedState, target_id, damageResult.damage);
+
+          // Track crits in battle performance
+          if (damageResult.is_crit) {
+            updatedState = incrementCritHits(updatedState, turn_result.character_id);
+          }
+        }
+      }
+
+      // Apply status effects
+      const status_effects = ability?.effects?.filter((e: any) =>
+        e.type === 'status' || e.type === 'buff' || e.type === 'debuff' || e.type === 'stun'
+      );
+      if (status_effects && status_effects.length > 0) {
+        for (const statusEffect of status_effects) {
+          // Determine targets for status effect
+          const statusTargets = statusEffect.target === 'self' ? [actor] :
+            statusEffect.target === 'all_enemies' ? getAllEnemies(updatedState, turn_result.character_id) :
+              statusEffect.target === 'all_allies' ? getAllAllies(updatedState, turn_result.character_id) :
+                target ? [target] : [];
+
+          for (const statusTarget of statusTargets) {
+            updatedState = applyStatusEffect(updatedState, statusTarget.character.id, statusEffect);
+          }
+        }
+      }
+
+      // Deduct mana if spell
+      if (turn_result.actual_action.type === 'spell' && turn_result.actual_action.ability_id) {
+        const spell = actor.unlocked_spells.find(s => s.id === turn_result.actual_action.ability_id);
+        if (spell) {
+          updatedState = deductMana(updatedState, turn_result.character_id, spell.mana_cost);
+        }
+      }
+    }
+  }
+
+  // Set cooldowns for used abilities
+  if (turn_result.actual_action.type === 'power' && turn_result.actual_action.ability_id && actor) {
+    const power = actor.unlocked_powers.find(p => p.id === turn_result.actual_action.ability_id);
+    if (power) {
+      updatedState = setPowerCooldown(
+        updatedState,
+        turn_result.character_id,
+        turn_result.actual_action.ability_id,
+        power.cooldown_turns
+      );
+    }
+  } else if (turn_result.actual_action.type === 'spell' && turn_result.actual_action.ability_id && actor) {
+    const spell = actor.unlocked_spells.find(s => s.id === turn_result.actual_action.ability_id);
+    if (spell) {
+      updatedState = setSpellCooldown(
+        updatedState,
+        turn_result.character_id,
+        turn_result.actual_action.ability_id,
+        spell.cooldown_turns
+      );
+    }
+  }
+
+  return updatedState;
+}
+
+/**
+ * Calculate damage for an action with crit chance, dodge, and all effects
+ */
+function calculateDamage(
+  attacker: BattleCharacter,
+  defender: BattleCharacter,
+  action: { type: string; ability_id?: string; ability_type?: string }
+): { damage: number; is_crit: boolean; dodged: boolean } {
+  let baseDamage = 0;
+  let critChance = getStat(attacker, 'critical_chance', 0);
+
+  // Check for dodge/evasion first
+  const dodgeChance = getStat(defender, 'evasion', 0);
+  const dodgeRoll = Math.random() * 100;
+  if (dodgeRoll < dodgeChance) {
+    return { damage: 0, is_crit: false, dodged: true };
+  }
+
+  if (action.type === 'attack') {
+    // Basic attack - use attack stat
+    if (action.ability_type === 'power_attack') {
+      baseDamage = attacker.character.attack * 1.5;
+    } else {
+      baseDamage = attacker.character.attack;
+    }
+  } else if (action.type === 'power' && action.ability_id) {
+    // Power - read effects from power definition
+    const power = attacker.unlocked_powers.find(p => p.id === action.ability_id);
+    if (power && power.effects) {
+      const damageEffect = power.effects.find((e: any) => e.type === 'damage');
+      if (damageEffect) {
+        baseDamage = damageEffect.value;
+      }
+      // Check for crit chance in power
+      const critEffect = power.effects.find((e: any) => e.type === 'critChance');
+      if (critEffect) {
+        critChance += critEffect.value;
+      }
+    }
+  } else if (action.type === 'spell' && action.ability_id) {
+    // Spell - read effects from spell definition
+    const spell = attacker.unlocked_spells.find(s => s.id === action.ability_id);
+    if (spell && spell.effects) {
+      const damageEffect = spell.effects.find((e: any) => e.type === 'damage');
+      if (damageEffect) {
+        baseDamage = damageEffect.value;
+      }
+      // Check for crit chance in spell
+      const critEffect = spell.effects.find((e: any) => e.type === 'critChance');
+      if (critEffect) {
+        critChance += critEffect.value;
+      }
+    }
+  }
+
+  // Check for critical hit
+  const critRoll = Math.random() * 100;
+  const isCrit = critRoll < critChance;
+  if (isCrit) {
+    baseDamage *= 2; // Critical hits do 2x damage
+  }
+
+  // Apply defender's defense
+  const defense = defender.character.defense;
+  const finalDamage = Math.max(1, Math.floor(baseDamage - defense));
+
+  return { damage: finalDamage, is_crit: isCrit, dodged: false };
+}
+
+/**
+ * Deduct mana from a character
+ */
+function deductMana(
+  battle_state: BattleState,
+  character_id: string,
+  mana_cost: number
+): BattleState {
+  const isPlayerTeam = battle_state.teams.player.characters.some(c => c.character.id === character_id);
+
+  if (isPlayerTeam) {
+    const updatedCharacters = battle_state.teams.player.characters.map(char => {
+      if (char.character.id === character_id) {
+        return {
+          ...char,
+          current_mana: Math.max(0, char.current_mana - mana_cost)
+        };
+      }
+      return char;
+    });
+
+    return {
+      ...battle_state,
+      teams: {
+        ...battle_state.teams,
+        player: {
+          ...battle_state.teams.player,
+          characters: updatedCharacters
+        }
+      }
+    };
+  } else {
+    const updatedCharacters = battle_state.teams.opponent.characters.map(char => {
+      if (char.character.id === character_id) {
+        return {
+          ...char,
+          current_mana: Math.max(0, char.current_mana - mana_cost)
+        };
+      }
+      return char;
+    });
+
+    return {
+      ...battle_state,
+      teams: {
+        ...battle_state.teams,
+        opponent: {
+          ...battle_state.teams.opponent,
+          characters: updatedCharacters
+        }
+      }
+    };
+  }
+}
+
+/**
+ * Apply damage to a character
+ */
+function applyDamageToCharacter(
+  battle_state: BattleState,
+  character_id: string,
+  damage: number
+): BattleState {
+  const isPlayerTeam = battle_state.teams.player.characters.some(c => c.character.id === character_id);
+
+  if (isPlayerTeam) {
+    const updatedCharacters = battle_state.teams.player.characters.map(char => {
+      if (char.character.id === character_id) {
+        return {
+          ...char,
+          current_health: Math.max(0, char.current_health - damage)
+        };
+      }
+      return char;
+    });
+
+    return {
+      ...battle_state,
+      teams: {
+        ...battle_state.teams,
+        player: {
+          ...battle_state.teams.player,
+          characters: updatedCharacters
+        }
+      }
+    };
+  } else {
+    const updatedCharacters = battle_state.teams.opponent.characters.map(char => {
+      if (char.character.id === character_id) {
+        return {
+          ...char,
+          current_health: Math.max(0, char.current_health - damage)
+        };
+      }
+      return char;
+    });
+
+    return {
+      ...battle_state,
+      teams: {
+        ...battle_state.teams,
+        opponent: {
+          ...battle_state.teams.opponent,
+          characters: updatedCharacters
+        }
+      }
+    };
+  }
+}
+
+/**
+ * Get AOE targets based on effect definition
+ */
+function getAOETargets(
+  battle_state: BattleState,
+  caster: BattleCharacter,
+  aoe_effect: any,
+  caster_id: string
+): BattleCharacter[] {
+  if (aoe_effect.target === 'all_enemies') {
+    return getAllEnemies(battle_state, caster_id);
+  } else if (aoe_effect.target === 'all_allies') {
+    return getAllAllies(battle_state, caster_id);
+  }
+  // Default to all enemies
+  return getAllEnemies(battle_state, caster_id);
+}
+
+/**
+ * Get all enemy characters
+ */
+function getAllEnemies(battle_state: BattleState, character_id: string): BattleCharacter[] {
+  const isPlayerTeam = battle_state.teams.player.characters.some(c => c.character.id === character_id);
+
+  if (isPlayerTeam) {
+    return battle_state.teams.opponent.characters.filter(c => c.current_health > 0);
+  } else {
+    return battle_state.teams.player.characters.filter(c => c.current_health > 0);
+  }
+}
+
+/**
+ * Get all ally characters (including self)
+ */
+function getAllAllies(battle_state: BattleState, character_id: string): BattleCharacter[] {
+  const isPlayerTeam = battle_state.teams.player.characters.some(c => c.character.id === character_id);
+
+  if (isPlayerTeam) {
+    return battle_state.teams.player.characters.filter(c => c.current_health > 0);
+  } else {
+    return battle_state.teams.opponent.characters.filter(c => c.current_health > 0);
+  }
+}
+
+/**
+ * Apply healing to a character
+ */
+function applyHealingToCharacter(
+  battle_state: BattleState,
+  character_id: string,
+  heal_amount: number
+): BattleState {
+  const isPlayerTeam = battle_state.teams.player.characters.some(c => c.character.id === character_id);
+
+  if (isPlayerTeam) {
+    const updatedCharacters = battle_state.teams.player.characters.map(char => {
+      if (char.character.id === character_id) {
+        const max_health = char.character.health;
+        return {
+          ...char,
+          current_health: Math.min(max_health, char.current_health + heal_amount)
+        };
+      }
+      return char;
+    });
+
+    return {
+      ...battle_state,
+      teams: {
+        ...battle_state.teams,
+        player: {
+          ...battle_state.teams.player,
+          characters: updatedCharacters
+        }
+      }
+    };
+  } else {
+    const updatedCharacters = battle_state.teams.opponent.characters.map(char => {
+      if (char.character.id === character_id) {
+        const max_health = char.character.health;
+        return {
+          ...char,
+          current_health: Math.min(max_health, char.current_health + heal_amount)
+        };
+      }
+      return char;
+    });
+
+    return {
+      ...battle_state,
+      teams: {
+        ...battle_state.teams,
+        opponent: {
+          ...battle_state.teams.opponent,
+          characters: updatedCharacters
+        }
+      }
+    };
+  }
+}
+
+/**
+ * Apply status effect to a character
+ */
+function applyStatusEffect(
+  battle_state: BattleState,
+  character_id: string,
+  status_effect: any
+): BattleState {
+  const isPlayerTeam = battle_state.teams.player.characters.some(c => c.character.id === character_id);
+
+  const newStatusEffect: StatusEffect = {
+    id: `${status_effect.status_effect || status_effect.type}_${Date.now()}`,
+    name: status_effect.status_effect || status_effect.type,
+    type: (status_effect.type === 'buff' ? 'buff' : status_effect.type === 'debuff' ? 'debuff' : 'neutral') as 'buff' | 'debuff' | 'neutral',
+    description: `${status_effect.status_effect || status_effect.type} effect`,
+    value: status_effect.value || 0,
+    duration: status_effect.duration || 1,
+    stackable: false
+  };
+
+  if (isPlayerTeam) {
+    const updatedCharacters = battle_state.teams.player.characters.map(char => {
+      if (char.character.id === character_id) {
+        return {
+          ...char,
+          status_effects: [...(char.status_effects || []), newStatusEffect]
+        };
+      }
+      return char;
+    });
+
+    return {
+      ...battle_state,
+      teams: {
+        ...battle_state.teams,
+        player: {
+          ...battle_state.teams.player,
+          characters: updatedCharacters
+        }
+      }
+    };
+  } else {
+    const updatedCharacters = battle_state.teams.opponent.characters.map(char => {
+      if (char.character.id === character_id) {
+        return {
+          ...char,
+          status_effects: [...(char.status_effects || []), newStatusEffect]
+        };
+      }
+      return char;
+    });
+
+    return {
+      ...battle_state,
+      teams: {
+        ...battle_state.teams,
+        opponent: {
+          ...battle_state.teams.opponent,
+          characters: updatedCharacters
+        }
+      }
+    };
+  }
+}
+
+/**
+ * Increment crit hits counter for battle performance
+ */
+function incrementCritHits(battle_state: BattleState, character_id: string): BattleState {
+  const isPlayerTeam = battle_state.teams.player.characters.some(c => c.character.id === character_id);
+
+  if (isPlayerTeam) {
+    const updatedCharacters = battle_state.teams.player.characters.map(char => {
+      if (char.character.id === character_id) {
+        return {
+          ...char,
+          battle_performance: {
+            ...char.battle_performance,
+            damage_dealt: (char.battle_performance?.damage_dealt || 0) + 1
+          }
+        };
+      }
+      return char;
+    });
+
+    return {
+      ...battle_state,
+      teams: {
+        ...battle_state.teams,
+        player: {
+          ...battle_state.teams.player,
+          characters: updatedCharacters
+        }
+      }
+    };
+  } else {
+    const updatedCharacters = battle_state.teams.opponent.characters.map(char => {
+      if (char.character.id === character_id) {
+        return {
+          ...char,
+          battle_performance: {
+            ...char.battle_performance,
+            damage_dealt: (char.battle_performance?.damage_dealt || 0) + 1
+          }
+        };
+      }
+      return char;
+    });
+
+    return {
+      ...battle_state,
+      teams: {
+        ...battle_state.teams,
+        opponent: {
+          ...battle_state.teams.opponent,
+          characters: updatedCharacters
+        }
+      }
+    };
+  }
+}
+
+/**
+ * Generate human-readable round summary
+ */
+function generateRoundSummary(turnResults: TurnExecutionResult[]): string {
+  const lines: string[] = [];
+
+  turnResults.forEach(result => {
+    const character = result.character_id;
+    const actionSource = result.action_source === 'plan_executed'
+      ? '✓ Followed plan'
+      : result.action_source === 'plan_b_adaptation'
+        ? '⚠ Plan B adaptation'
+        : '✗ Rebellion';
+
+    lines.push(`${character}: ${actionSource} - ${result.reasoning}`);
+  });
+
+  return lines.join('\n');
+}
+
+/**
+ * Check if battle is over
+ */
+export function checkBattleEnd(battle_state: BattleState): {
+  is_over: boolean;
+  winner: 'player' | 'opponent' | 'draw' | null;
+} {
+  const playerAlive = battle_state.teams.player.characters.some(c => c.current_health > 0);
+  const opponentAlive = battle_state.teams.opponent.characters.some(c => c.current_health > 0);
+
+  if (!playerAlive && !opponentAlive) {
+    return { is_over: true, winner: 'draw' };
+  } else if (!playerAlive) {
+    return { is_over: true, winner: 'opponent' };
+  } else if (!opponentAlive) {
+    return { is_over: true, winner: 'player' };
+  }
+
+  return { is_over: false, winner: null };
+}
+
+function getStat(bc: BattleCharacter, stat: string, fallback: number = 0): number {
+  const c = bc.character;
+  if (stat in c && typeof (c as any)[stat] === 'number') {
+    return (c as any)[stat];
+  }
+  if ('stats' in c && c.stats && stat in c.stats) {
+    return (c.stats as any)[stat];
+  }
+  return fallback;
+}

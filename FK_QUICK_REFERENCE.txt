@@ -1,0 +1,46 @@
+BLANK WARS - FOREIGN KEY QUICK REFERENCE
+=========================================
+
+ROOT TABLES (No incoming FKs - should be at diagram edges/origins):
+- users (15 outgoing)
+- characters (4 outgoing) 
+- challenge_templates (3 outgoing)
+- healing_facilities (1 outgoing)
+- card_packs (referenced via pack_template_id)
+- game_events (1 outgoing, intentionally no incoming)
+
+CENTRAL HUB TABLES:
+- users: 15 tables connect TO it
+- user_characters: 16 tables connect TO it (plus 2 outgoing to users & characters)
+
+CHALLENGE SYSTEM FLOW:
+challenge_templates → active_challenges → {challenge_participants, challenge_alliances, challenge_results}
+                   ↓
+              challenge_rewards
+
+BATTLE SYSTEM FLOW:
+users → battles ← user_characters
+      ↓
+{chat_messages, coach_xp_events}
+
+EXPECTED ISOLATED TABLES:
+- game_events (only connects to character_memories)
+- character_memories (only receives from game_events)
+- System tables: migration_log, migration_meta, cron_logs, tmp_user_characters_backup
+
+ORPHAN TABLES (No FKs at all - investigate if intentional):
+- chat_sessions
+- scene_triggers  
+- memory_entries
+- events
+- facts
+- user_daily_stats
+- session_state
+- state_digest
+
+MOST CONNECTED:
+1. user_characters: 18 total (2 out, 16 in)
+2. users: 15 total (0 in, 15 out)
+3. battles: 7 total (5 out, 2 in)
+4. challenge_results: 7 total (5 out, 2 in)
+

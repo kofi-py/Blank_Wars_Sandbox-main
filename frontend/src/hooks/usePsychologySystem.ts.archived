@@ -1,0 +1,487 @@
+import { useCallback, useEffect, useState } from 'react';
+import {
+  initializePsychologyState,
+  updatePsychologyState,
+  calculateDeviationRisk,
+  rollForDeviation,
+  calculateStabilityFactors,
+  type PsychologyState,
+  type DeviationEvent
+} from '@/data/characterPsychology';
+import { makeJudgeDecision, generateDeviationPrompt, type JudgeDecision } from '@/data/aiJudgeSystem';
+import { type RogueAction } from '@/data/aiJudge';
+import { type BattleStateData } from '@/hooks/temp/useBattleState';
+import { TeamCharacter } from '@/data/teamBattleSystem';
+import { coachProgressionAPI, type CoachBonuses } from '@/services/coachProgressionAPI';
+
+// Types for the psychology system
+type Ability = {
+  name: string;
+  type: 'attack' | 'defense' | 'special';
+  power?: number;
+  cooldown?: number;
+  description?: string;
+};
+
+interface UsePsychologySystemProps {
+  state: BattleStateData;
+  actions: any; // Full actions object from useBattleState
+  timeout_manager: {
+    setTimeout: (cb: () => void, delay: number) => any;
+    clearTimeout: (id: any) => void;
+  };
+  speak: (text: string) => void;
+  execute_ability: (attacker: TeamCharacter, defender: TeamCharacter, ability: Ability, is_attacker1: boolean) => any;
+  headquarters_effects?: any;
+}
+
+export const usePsychologySystem = ({
+  state,
+  actions,
+  timeout_manager,
+  speak,
+  execute_ability,
+  headquarters_effects
+}: UsePsychologySystemProps) => {
+  const { setTimeout: safeSetTimeout } = timeout_manager;
+  const [coachBonuses, setCoachBonuses] = useState<CoachBonuses | null>(null);
+
+  // Fetch coach bonuses on mount
+  useEffect(() => {
+    const fetchCoachBonuses = async () => {
+      try {
+        const response = await coachProgressionAPI.getProgression();
+        setCoachBonuses(response.bonuses);
+      } catch (error) {
+        console.error('Failed to fetch coach bonuses:', error);
+        // Use default bonuses if API fails
+        setCoachBonuses({
+          gameplan_adherence_bonus: 0,
+          deviation_risk_reduction: 0,
+          team_chemistry_bonus: 0,
+          battle_xpmultiplier: 1,
+          character_development_multiplier: 1
+        });
+      }
+    };
+
+    fetchCoachBonuses();
+  }, []);
+
+  // Main chaos check function - extracted from component
+  const checkForChaos = useCallback((attacker: TeamCharacter, defender: TeamCharacter, ability: Ability, is_attacker1: boolean) => {
+    // Get character's current psychology state
+    const psychState = state.character_psychology.get(attacker.id);
+    if (!psychState) {
+      // No psychology state, execute normally
+      return execute_ability(attacker, defender, ability, is_attacker1);
+    }
+
+    // Calculate battle context for deviation risk
+    const battle_context = {
+      recent_damage: Math.max(0, attacker.max_health - attacker.current_health),
+      team_performance: is_attacker1 ? state.player_morale : state.opponent_morale,
+      strategy_success_rate: 75, // TODO: Track actual strategy success
+      opponent_levelDifference: defender.level - attacker.level,
+      rounds_won: is_attacker1 ? state.playerRoundWins : state.opponentRoundWins,
+      rounds_lost: is_attacker1 ? state.opponentRoundWins : state.playerRoundWins
+    };
+
+    // Update psychology based on current state
+    const factors = calculateStabilityFactors(
+      attacker, // attacker is already a TeamCharacter
+      battle_context
+    );
+
+    // Update psychology state
+    const updatedPsychState = updatePsychologyState(psychState, factors);
+    const newPsychMap = new Map(state.character_psychology);
+    newPsychMap.set(attacker.id, updatedPsychState);
+    actions.setCharacterPsychology(newPsychMap);
+
+    // Calculate deviation risk with teammates and coach bonuses
+    const attackerTeammates = is_attacker1 ? state.player_team.characters : state.opponent_team.characters;
+    const deviationRisk = calculateDeviationRisk(
+      attacker, // attacker is already a TeamCharacter
+      updatedPsychState,
+      attackerTeammates,
+      coachBonuses || undefined
+    );
+
+    // Roll for deviation
+    const deviationResult = rollForDeviation(deviationRisk);
+    const deviation = deviationResult.hasDeviation ? deviationResult.deviation : null;
+
+    // Award gameplan adherence XP based on adherence success/failure
+    const adherenceRate = deviation ? 0 : 100; // 0% if deviated, 100% if followed plan
+    const deviationsBlocked = deviation ? 0 : 1; // 1 deviation blocked if no deviation occurred
+    const deviationSeverity = deviation?.severity || 'minor';
+
+    // Award XP for psychology management (async, don't block battle)
+    if (state.battle_id) {
+      coachProgressionAPI.awardGameplanAdherenceXP(
+        adherenceRate,
+        deviationsBlocked,
+        deviationSeverity as 'minor' | 'moderate' | 'major' | 'extreme',
+        state.battle_id
+      ).catch(error => console.error('Failed to award gameplan adherence XP:', error));
+    }
+
+    if (deviation) {
+      // Character goes rogue! Handle the chaos
+      return handleCharacterDeviation(deviation, attacker, defender, ability, is_attacker1);
+    } else {
+      // Normal execution
+      return execute_ability(attacker, defender, ability, is_attacker1);
+    }
+  }, [state.character_psychology, state.player_morale, state.opponent_morale, state.playerRoundWins, state.opponentRoundWins, state.player_team.characters, state.opponent_team.characters, coachBonuses]);
+
+  // Handle character deviation - extracted from component
+  const handleCharacterDeviation = useCallback((
+    deviation: DeviationEvent,
+    attacker: TeamCharacter,
+    defender: TeamCharacter,
+    ability: Ability,
+    is_attacker1: boolean
+  ) => {
+    // Add to active deviations
+    actions.setActiveDeviations([...state.activeDeviations, deviation]);
+
+    // Get judge decision
+    const judgeDecision = makeJudgeDecision(
+      deviation,
+      attacker, // attacker is already a TeamCharacter
+      {
+        current_round: state.current_round,
+        opponent_character: defender, // defender is already a TeamCharacter
+        arena_condition: 'pristine' // TODO: Track arena damage
+      },
+      state.current_judge
+    );
+
+    // Add judge decision
+    actions.setJudgeDecisions([...state.judge_decisions, judgeDecision]);
+
+    // Apply the judge's mechanical effect
+    return applyChaosEffect(judgeDecision, attacker, defender, ability, is_attacker1);
+  }, [state.activeDeviations, state.current_round, state.current_judge, state.judge_decisions]);
+
+  // Apply chaos effects - extracted from component
+  const applyChaosEffect = useCallback((
+    judge_decision: JudgeDecision,
+    attacker: TeamCharacter,
+    defender: TeamCharacter,
+    ability: Ability,
+    is_attacker1: boolean
+  ) => {
+    const effect = judge_decision.mechanical_effect;
+
+    switch (effect.type) {
+      case 'damage':
+        if (effect.target === 'self') {
+          const newAttackerHP = Math.max(0, attacker.current_health - (effect.amount || 20));
+          if (is_attacker1) {
+            actions.set_user_character(prev => ({ ...prev, hp: newAttackerHP }));
+          } else {
+            actions.set_opponent_character(prev => ({ ...prev, hp: newAttackerHP }));
+          }
+          return {
+            description: `${judge_decision.narrative} - ${attacker.name} takes ${effect.amount} chaos damage!`,
+            newAttackerHP,
+            new_defender_hp: defender.current_health,
+            chaos_event: true
+          };
+        } else if (effect.target === 'opponent') {
+          const new_defender_hp = Math.max(0, defender.current_health - (effect.amount || 20));
+          if (is_attacker1) {
+            actions.set_opponent_character(prev => ({ ...prev, hp: new_defender_hp }));
+          } else {
+            actions.set_user_character(prev => ({ ...prev, hp: new_defender_hp }));
+          }
+          return {
+            description: `${judge_decision.narrative} - ${defender.name} takes ${effect.amount} chaos damage!`,
+            new_attacker_hp: attacker.current_health,
+            new_defender_hp,
+            chaos_event: true
+          };
+        }
+        break;
+
+      case 'skip_turn':
+        return {
+          description: `${judge_decision.narrative} - ${attacker.name} forfeits their turn!`,
+          new_attacker_hp: attacker.current_health,
+          new_defender_hp: defender.current_health,
+          chaos_event: true
+        };
+
+      case 'redirect_attack':
+        if (effect.target === 'teammate') {
+          // Attack teammate instead - for now, just apply damage to attacker as friendly fire
+          const friendlyFireDamage = (effect.amount || 15);
+          const newAttackerHP = Math.max(0, attacker.current_health - friendlyFireDamage);
+          if (is_attacker1) {
+            actions.set_user_character(prev => ({ ...prev, hp: newAttackerHP }));
+          } else {
+            actions.set_opponent_character(prev => ({ ...prev, hp: newAttackerHP }));
+          }
+          return {
+            description: `${judge_decision.narrative} - Friendly fire deals ${friendlyFireDamage} damage to ${attacker.name}!`,
+            newAttackerHP,
+            new_defender_hp: defender.current_health,
+            chaos_event: true
+          };
+        }
+        break;
+
+      default:
+        // Default chaos - execute normal ability but with chaos flavor
+        const normalResult = execute_ability(attacker, defender, ability, is_attacker1);
+        return {
+          ...normalResult,
+          description: `${judge_decision.narrative} - ${normalResult.description}`,
+          chaos_event: true
+        };
+    }
+
+    // Fallback to normal execution
+    const normalResult = execute_ability(attacker, defender, ability, is_attacker1);
+    return {
+      ...normalResult,
+      description: `${judge_decision.narrative} - ${normalResult.description}`,
+      chaos_event: true
+    };
+  }, []);
+
+  // Initialize psychology states for all characters
+  const initializePsychologyStates = useCallback(() => {
+    const newPsychStates = new Map<string, PsychologyState>();
+    const allCharacters = [...state.player_team.characters, ...state.opponent_team.characters];
+
+    allCharacters.forEach(char => {
+      if (!state.character_psychology.has(char.id)) {
+        newPsychStates.set(char.id, initializePsychologyState(char, headquarters_effects, allCharacters));
+      } else {
+        newPsychStates.set(char.id, state.character_psychology.get(char.id)!);
+      }
+    });
+
+    if (newPsychStates.size > 0) {
+      actions.setCharacterPsychology(newPsychStates);
+    }
+  }, [state.player_team, state.opponent_team, headquarters_effects]);
+
+  // Auto-initialize when teams change
+  useEffect(() => {
+    initializePsychologyStates();
+  }, [initializePsychologyStates]);
+
+  // Process psychological effects during battle
+  const processPsychologicalEffects = useCallback(async (character: TeamCharacter, battle_context: {
+    round_number: number;
+    is_winning: boolean;
+    team_morale: number;
+    opponent_morale: number;
+    opponent_name: string;
+    teammate_name: string;
+    current_situation: string;
+  }) => {
+    const currentPsychState = state.character_psychology.get(character.id);
+    if (!currentPsychState) return;
+
+    try {
+      // Calculate deviation risk
+      const deviationRisk = calculateDeviationRisk(
+        character,
+        currentPsychState
+      );
+
+      // Roll for potential deviation
+      const deviationResult = rollForDeviation(deviationRisk);
+
+      if (deviationResult.hasDeviation && deviationResult.deviation) {
+        // Add new deviation
+        const newDeviations = [...state.activeDeviations, deviationResult.deviation];
+        actions.setActiveDeviations(newDeviations);
+
+        // Announce the deviation
+        const deviationText = generateDeviationPrompt(
+          character,
+          deviationResult.deviation,
+          {
+            current_round: battle_context.round_number,
+            opponent_name: battle_context.opponent_name,
+            teammate_name: battle_context.teammate_name,
+            current_situation: battle_context.current_situation
+          }
+        );
+        actions.set_current_announcement(deviationText);
+        speak(deviationText);
+
+        // Trigger judge decision if needed
+        if (deviationResult.deviation.severity === 'major') {
+          await processJudgeDecision(character, deviationResult.deviation);
+        }
+      }
+
+      // Update psychology state based on battle events
+      // Calculate stability factors first
+      const factors = calculateStabilityFactors(character, {
+        recent_damage: 0, // Simplified for now
+        team_performance: battle_context.team_morale,
+        strategy_success_rate: currentPsychState.strategic_alignment,
+        opponent_levelDifference: 0,
+        rounds_won: battle_context.is_winning ? battle_context.round_number : 0,
+        rounds_lost: battle_context.is_winning ? 0 : battle_context.round_number
+      });
+
+      // Update psychology state based on battle events
+      const updatedPsychState = updatePsychologyState(
+        currentPsychState,
+        factors,
+        battle_context.is_winning ? 'victory' : 'defeat'
+      );
+
+      // Update the psychology map
+      const updatedPsychMap = new Map(state.character_psychology);
+      updatedPsychMap.set(character.id, updatedPsychState);
+      actions.setCharacterPsychology(updatedPsychMap);
+
+    } catch (error) {
+      console.error('Error processing psychological effects for', character.name, ':', error);
+    }
+  }, [state.activeDeviations]);
+
+  // Process judge decision for severe deviations
+  const processJudgeDecision = useCallback(async (character: TeamCharacter, deviation: DeviationEvent) => {
+    try {
+      const judgeDecision = await makeJudgeDecision(
+        deviation,
+        character,
+        {
+          current_round: state.current_round,
+          opponent_character: state.opponent_team.characters[0], // Simplified
+          arena_condition: 'pristine'
+        },
+        state.current_judge
+      );
+
+      // Add judge decision to history
+      const newJudgeDecisions = [...state.judge_decisions, judgeDecision];
+      actions.setJudgeDecisions(newJudgeDecisions);
+
+      // Announce judge ruling
+      const rulingText = `Judge ${state.current_judge.name} rules: ${judgeDecision.ruling}. ${judgeDecision.explanation}`;
+      actions.set_current_announcement(rulingText);
+      speak(rulingText);
+
+      // Apply penalties if any
+      if (judgeDecision.penalty) {
+        await applyJudgePenalty(character, judgeDecision.penalty);
+      }
+
+    } catch (error) {
+      console.error('Error processing judge decision:', error);
+    }
+  }, [state.current_judge, state.current_round, state.player_morale, state.opponent_morale, state.activeDeviations, state.judge_decisions]);
+
+  // Apply judge penalties
+  const applyJudgePenalty = useCallback(async (character: TeamCharacter, penalty: any) => {
+    // Implementation would depend on the penalty structure
+    // This is a placeholder for penalty application logic
+    console.log(`Applying penalty to ${character.name}:`, penalty);
+
+    const penaltyText = `${character.name} receives a penalty: ${penalty.description}`;
+    actions.set_current_announcement(penaltyText);
+    speak(penaltyText);
+  }, []);
+
+  // Clear expired deviations
+  const clearExpiredDeviations = useCallback(() => {
+    const current_round = state.current_round;
+    const activeDeviations = state.activeDeviations.filter(deviation =>
+      deviation.duration === 'permanent' ||
+      (deviation.startRound + (deviation.duration === 'temporary' ? 1 : 3)) > current_round
+    );
+
+    if (activeDeviations.length !== state.activeDeviations.length) {
+      actions.setActiveDeviations(activeDeviations);
+    }
+  }, [state.current_round, state.activeDeviations]);
+
+  // Calculate stability factors for a character
+  const getCharacterStability = useCallback((character_id: string) => {
+    // Get psychology state
+    const psychState = state.character_psychology.get(character_id);
+    if (!psychState) return null;
+
+    // Find the character object
+    const allCharacters = [...state.player_team.characters, ...state.opponent_team.characters];
+    const character = allCharacters.find(c => c.id === character_id);
+    if (!character) return null;
+
+    // Determine if player or opponent
+    const is_player = state.player_team.characters.some(c => c.id === character_id);
+
+    // Get opponent team for level calculation
+    const opponent_team = is_player ? state.opponent_team.characters : state.player_team.characters;
+    const avg_opponent_level = opponent_team.reduce((sum, c) => sum + c.level, 0) / opponent_team.length;
+
+    // Build battle context with real data from state
+    const battle_context = {
+      recent_damage: Math.max(0, character.max_health - character.current_health),
+      team_performance: is_player ? state.player_morale : state.opponent_morale,
+      strategy_success_rate: psychState.strategic_alignment,
+      opponent_levelDifference: avg_opponent_level - character.level,
+      rounds_won: is_player ? state.playerRoundWins : state.opponentRoundWins,
+      rounds_lost: is_player ? state.opponentRoundWins : state.playerRoundWins
+    };
+
+    // Calculate stability factors from battle performance
+    const stability_factors = calculateStabilityFactors(character, battle_context);
+
+    // Get active deviations affecting this character
+    const active_deviations = state.activeDeviations.filter(d => d.character_id === character_id);
+
+    // Return comprehensive stability assessment
+    return {
+      stability_factors,
+      psych_state: psychState,
+      active_deviations,
+      deviation_count: active_deviations.length
+    };
+  }, [state.character_psychology, state.current_round, state.activeDeviations, state.player_team, state.opponent_team, state.player_morale, state.opponent_morale, state.playerRoundWins, state.opponentRoundWins]);
+
+  // Get all active deviations for a character
+  const getCharacterDeviations = useCallback((character_id: string) => {
+    return state.activeDeviations.filter(deviation => deviation.character_id === character_id);
+  }, [state.activeDeviations]);
+
+  // Reset psychology system
+  const resetPsychologySystem = useCallback(() => {
+    actions.setCharacterPsychology(new Map());
+    actions.setActiveDeviations([]);
+    actions.setJudgeDecisions([]);
+    actions.setCurrentRogueAction(null);
+    initializePsychologyStates();
+  }, [initializePsychologyStates]);
+
+  return {
+    // Main exported functions
+    checkForChaos,
+    handleCharacterDeviation,
+    applyChaosEffect,
+    initializePsychologyStates,
+    processPsychologicalEffects,
+    processJudgeDecision,
+    clearExpiredDeviations,
+    getCharacterStability,
+    getCharacterDeviations,
+    resetPsychologySystem,
+
+    // Computed values
+    total_active_deviations: state.activeDeviations.length,
+    has_active_rogue_action: state.currentRogueAction !== null,
+    psychology_initialized: state.character_psychology.size > 0
+  };
+};

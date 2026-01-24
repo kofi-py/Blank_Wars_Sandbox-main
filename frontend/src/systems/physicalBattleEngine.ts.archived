@@ -1,0 +1,1330 @@
+// Physical Battle Engine - CORRECTED Implementation
+// This fixes the fundamental misunderstanding: Psychology affects combat performance, it IS NOT the combat itself
+
+import {
+  BattleState,
+  CombatRound,
+  BattleCharacter,
+  GameplanAdherenceCheck,
+  RogueAction,
+  MoraleEvent,
+  CombatAction,
+  ExecutedAction,
+  PlannedAction,
+  PreBattleHuddle,
+  CoachingTimeout,
+  PostBattleAnalysis,
+  ActionOutcome
+} from '../data/battleFlow';
+import { calculateFinalStats } from '../data/characterEquipment';
+import { initializePsychologyState } from '../data/characterPsychology';
+import { makeJudgeDecision, judgePersonalities, JudgeDecision, JudgePersonality } from '../data/aiJudgeSystem';
+import { BattleValidation } from '../utils/battleValidation';
+import { generateBattleNarration } from '../services/battleAnnouncerAI';
+
+export interface PhysicalDamageCalculation {
+  base_damage: number;
+  weapon_damage: number;
+  strength_bonus: number;
+  armor_reduction: number;
+  psychology_modifier: number; // This is where psychology affects combat
+  final_damage: number;
+  damage_breakdown: string[];
+}
+
+export interface PhysicalActionOutcome extends ActionOutcome {
+  physical_damage: PhysicalDamageCalculation;
+  health_change: number;
+  armor_damage: number;
+  status_effectsApplied: string[];
+  counter_attack_triggered: boolean;
+  psychology_deviation?: {
+    character: BattleCharacter;
+    deviation_risk: number;
+    triggered_action?: string;
+    risk_factors: string[];
+  };
+  judge_decision?: {
+    decision: JudgeDecision;
+    judge: JudgePersonality;
+    triggered_by_deviation: boolean;
+    ai_generated_action?: string;
+  };
+}
+
+export class PhysicalBattleEngine {
+
+  // ============= PHYSICAL COMBAT CORE =============
+
+  // Helper to safely get ability power from any ability type
+  private static getAbilityPower(ability: any): number {
+    if ('power' in ability && typeof ability.power === 'number') {
+      return ability.power;
+    }
+    // Handle new Ability type from abilities.ts
+    if ('effects' in ability && Array.isArray(ability.effects)) {
+      const damageEffect = ability.effects.find((e: any) => e.type === 'damage');
+      return damageEffect ? damageEffect.value : 0;
+    }
+    return 0;
+  }
+
+  // Helper to safely get stats from either Contestant or TeamCharacter
+  private static getStat(bc: BattleCharacter, stat: string, fallback: number = 0): number {
+    const c = bc.character;
+    // Try direct property first (TeamCharacter or Contestant top-level)
+    if (stat in c && typeof (c as any)[stat] === 'number') {
+      return (c as any)[stat];
+    }
+    // Try stats object (Contestant)
+    if ('stats' in c && c.stats && stat in c.stats) {
+      return c.stats[stat];
+    }
+    return fallback;
+  }
+
+  private static getCritChance(bc: BattleCharacter): number {
+    const c = bc.character;
+    if ('critical_chance' in c && typeof c.critical_chance === 'number') {
+      return c.critical_chance;
+    }
+    // Fallback based on dexterity if available
+    const dex = this.getStat(bc, 'dexterity', 10);
+    return dex * 0.001; // 10 dex = 1% crit
+  }
+
+  static async executePhysicalAction(
+    attacker: BattleCharacter,
+    target: BattleCharacter,
+    action: ExecutedAction,
+    battle_state: BattleState,
+    current_judge?: JudgePersonality
+  ): Promise<PhysicalActionOutcome> {
+
+    // SAFETY: Null pointer protection
+    if (!attacker || !target || !action || !battle_state) {
+      throw new Error('Invalid parameters for physical action execution');
+    }
+
+    // 0. JUDGE DECISION SYSTEM - Check for psychology deviations and judge rulings
+    const judgeResult = this.processJudgeDecision(attacker, action, battle_state, current_judge);
+    const finalAction = judgeResult.modified_action;
+    const judgeDecision = judgeResult.judge_decision;
+
+    // Update target if judge redirected the action
+    let finalTarget = target;
+    if (judgeResult.judge_triggered && judgeDecision) {
+      const effect = judgeDecision.mechanical_effect;
+      if (effect.type === 'redirect_attack' && effect.target === 'teammate') {
+        const teammate = this.findTeammate(attacker, battle_state);
+        if (teammate) {
+          // Find the BattleCharacter for this teammate
+          const teammateBC = battle_state.teams.player.characters.find(c => c.character.id === teammate.id) ||
+            battle_state.teams.opponent.characters.find(c => c.character.id === teammate.id);
+          if (teammateBC) {
+            finalTarget = teammateBC;
+            console.log(`💥 FRIENDLY FIRE: ${attacker.character.name} attacks teammate ${finalTarget.character.name}!`);
+          }
+        }
+      }
+    }
+
+    // 1. Calculate Base Physical Damage (using final action from judge)
+    const baseDamage = this.calculateBaseDamage(attacker, finalAction);
+
+    // 2. Apply Weapon Stats
+    const weaponDamage = this.calculateWeaponDamage(attacker, finalAction);
+
+    // 3. Apply Physical Stats (Strength, etc.)
+    const strengthBonus = this.calculateStrengthBonus(attacker);
+
+    // 4. Calculate Armor Defense (using final target from judge)
+    const armorReduction = this.calculateArmorDefense(finalTarget);
+
+    // 5. PSYCHOLOGY MODIFIER - This is where psychology affects combat
+    const psychologyModifier = this.calculatePsychologyModifier(attacker, finalTarget, battle_state);
+
+    // 6. JUDGE EFFECTS MODIFIER - Apply judge decision effects to damage
+    let judgeDamageModifier = 1.0;
+    let judgeTargetOverride: BattleCharacter | null = null;
+
+    if (judgeResult.judge_triggered && judgeDecision) {
+      const effect = judgeDecision.mechanical_effect;
+
+      // Apply judge effect to damage calculation
+      if (effect.type === 'damage' && effect.amount) {
+        // Judge sets specific damage amount
+        judgeDamageModifier = effect.amount / baseDamage;
+      } else if (effect.type === 'redirect_attack' && effect.amount) {
+        // Judge modifies damage for redirected attacks
+        judgeDamageModifier = effect.amount / (baseDamage || 1);
+      } else if (effect.type === 'skip_turn') {
+        // Judge nullifies damage
+        judgeDamageModifier = 0;
+      }
+    }
+
+    // 7. Final Damage Calculation with BOUNDS CHECKING
+    const rawDamage = (baseDamage + weaponDamage + strengthBonus - armorReduction) * psychologyModifier * judgeDamageModifier;
+    // BOUNDS CHECK: Cap damage between 0 and 9999 (judges can reduce to 0)
+    const totalDamage = BattleValidation.validateDamage(Math.floor(rawDamage));
+
+    // 8. Apply Damage to Final Target with safety checks
+    // BOUNDS CHECK: Ensure valid health values with validation
+    const current_health = finalTarget?.current_health || 0;
+    const max_health = this.getStat(finalTarget, 'max_health', 100);
+    const newHealth = BattleValidation.clamp(current_health - totalDamage, 0, max_health, 'current_health');
+    const healthChange = Math.min(current_health, totalDamage); // Can't lose more health than you have
+    if (finalTarget) {
+      finalTarget.current_health = newHealth;
+    }
+
+    // 9. Check for Status Effects
+    const status_effects = this.calculateStatusEffects(attacker, finalTarget, finalAction, totalDamage);
+
+    // 10. Check for Counter Attacks
+    const counterAttack = this.checkCounterAttack(finalTarget, attacker, totalDamage);
+
+    // Psychology monitoring removed - adherence checks happen via backend API in HexBattleArena
+
+    const damageBreakdown = [
+      `Base: ${baseDamage}`,
+      `Weapon: +${weaponDamage}`,
+      `Strength: +${strengthBonus}`,
+      `Armor: -${armorReduction}`,
+      `Psychology: ×${psychologyModifier.toFixed(2)}`,
+      ...(judgeResult.judge_triggered ? [`Judge: ×${judgeDamageModifier.toFixed(2)}`] : [])
+    ];
+
+    // Generate AI narration (unless judge already provided one)
+    let narrative_description: string;
+    if (judgeResult.judge_triggered && judgeDecision) {
+      narrative_description = judgeDecision.narrative;
+    } else {
+      const player_team = battle_state.teams.player;
+      const opponent_team = battle_state.teams.opponent;
+      const announcer_result = await generateBattleNarration({
+        attacker,
+        target: finalTarget,
+        action,
+        outcome: {
+          success: totalDamage > 0,
+          damage: totalDamage,
+          effects: [],
+          critical_result: this.wasCriticalHit(attacker, psychologyModifier),
+          narrative_description: '',
+          audience_reaction: '',
+          physical_damage: {
+            base_damage: baseDamage,
+            weapon_damage: weaponDamage,
+            strength_bonus: strengthBonus,
+            armor_reduction: armorReduction,
+            psychology_modifier: psychologyModifier,
+            final_damage: totalDamage,
+            damage_breakdown: damageBreakdown
+          },
+          health_change: healthChange,
+          armor_damage: Math.floor(totalDamage * 0.1),
+          status_effectsApplied: status_effects,
+          counter_attack_triggered: counterAttack,
+          judge_decision: undefined
+        },
+        round_number: battle_state.current_round,
+        battle_state_summary: {
+          player_team_name: 'Player Team',
+          opponent_team_name: 'Opponent Team',
+          player_characters_alive: player_team.characters.filter(c => c.current_health > 0).length,
+          opponent_characters_alive: opponent_team.characters.filter(c => c.current_health > 0).length
+        },
+        previous_narrations: battle_state.battle_log.slice(-5).map(log => log.description)
+      });
+      narrative_description = announcer_result.narrative_description;
+    }
+
+    return {
+      success: totalDamage > 0,
+      damage: totalDamage,
+      effects: [],
+      critical_result: this.wasCriticalHit(attacker, psychologyModifier),
+      narrative_description,
+      audience_reaction: judgeResult.judge_triggered ?
+        "The crowd reacts to the judge's unexpected ruling!" :
+        this.generateAudienceReaction(totalDamage, healthChange),
+      physical_damage: {
+        base_damage: baseDamage,
+        weapon_damage: weaponDamage,
+        strength_bonus: strengthBonus,
+        armor_reduction: armorReduction,
+        psychology_modifier: psychologyModifier,
+        final_damage: totalDamage,
+        damage_breakdown: damageBreakdown
+      },
+      health_change: healthChange,
+      armor_damage: Math.floor(totalDamage * 0.1), // Armor degrades
+      status_effectsApplied: status_effects,
+      counter_attack_triggered: counterAttack,
+      judge_decision: judgeResult.judge_triggered ? {
+        decision: judgeDecision!,
+        judge: judgeResult.judge!,
+        triggered_by_deviation: true
+      } : undefined
+    };
+  }
+
+  // ============= JUDGE INTEGRATION SYSTEM =============
+
+  static processJudgeDecision(
+    attacker: BattleCharacter,
+    action: ExecutedAction,
+    battle_state: BattleState,
+    current_judge?: JudgePersonality,
+    ai_generated_action?: string
+  ): {
+    judge_decision?: JudgeDecision;
+    judge?: JudgePersonality;
+    modified_action: ExecutedAction;
+    judge_triggered: boolean;
+  } {
+
+    // Use provided judge or default to King Solomon for consistent, logical results
+    const activeJudge = current_judge || judgePersonalities.find(j => j.name === 'King Solomon') || judgePersonalities[0];
+
+    // Check if we have a psychology deviation that requires judge interpretation
+    const psychDeviation = this.monitorPsychologyState(attacker, battle_state);
+
+    if (psychDeviation && psychDeviation.deviation_risk > 70) {
+      // High deviation risk triggers judge decision
+
+      // Create deviation event for judge system
+      // Create deviation event for judge system
+      const deviationEvent: any = {
+        character_id: attacker.character.id,
+        type: this.mapDeviationToType(psychDeviation.triggered_action || 'mild_insubordination'),
+        severity: this.getDeviationSeverity(psychDeviation.deviation_risk),
+        description: `${attacker.character.name}: ${psychDeviation.risk_factors.join(', ')}`,
+        gameplay_effect: 'Judge intervention required',
+        timestamp: new Date(),
+        character: attacker.character,
+        psychology_factors: psychDeviation.risk_factors
+      };
+
+      // Create battle context for judge
+      const battle_context = {
+        current_round: battle_state.current_round,
+        opponent_character: this.findOpponent(attacker, battle_state),
+        teammate_character: this.findTeammate(attacker, battle_state),
+        arena_condition: 'pristine' as const // TODO: Make this dynamic
+      };
+
+      // Generate AI action if not provided
+      const actionForJudge = ai_generated_action || this.generateBasicRogueAction(attacker, psychDeviation);
+
+      // Get judge decision!
+      const judgeDecision = makeJudgeDecision(
+        deviationEvent,
+        attacker.character as any, // Type cast for compatibility
+        battle_context,
+        activeJudge,
+        actionForJudge
+      );
+
+      // Modify action based on judge ruling
+      const modifiedAction = this.applyJudgeRulingToAction(action, judgeDecision, battle_state);
+
+      console.log(`⚖️ JUDGE RULING: ${activeJudge.name} - ${judgeDecision.ruling}`);
+      console.log(`🎭 NARRATIVE: ${judgeDecision.narrative}`);
+
+      return {
+        judge_decision: judgeDecision,
+        judge: activeJudge,
+        modified_action: modifiedAction,
+        judge_triggered: true
+      };
+    }
+
+    // No judge intervention needed
+    return {
+      modified_action: action,
+      judge_triggered: false
+    };
+  }
+
+  static mapDeviationToType(triggeredAction: string): any {
+    const deviationMap: Record<string, string> = {
+      'berserker_rage_all': 'berserker_rage',
+      'reckless_assault': 'berserker_rage',
+      'ignore_strategy': 'strategy_override',
+      'mild_insubordination': 'minor_insubordination'
+    };
+
+    return deviationMap[triggeredAction] || 'minor_insubordination';
+  }
+
+  static getDeviationSeverity(risk_level: number): 'minor' | 'moderate' | 'major' | 'extreme' {
+    if (risk_level >= 90) return 'extreme';
+    if (risk_level >= 80) return 'major';
+    if (risk_level >= 65) return 'moderate';
+    return 'minor';
+  }
+
+  static findOpponent(character: BattleCharacter, battle_state: BattleState): any {
+    const isPlayer = battle_state.teams.player.characters.includes(character);
+    const opponent_team = isPlayer ? battle_state.teams.opponent : battle_state.teams.player;
+    return opponent_team.characters[0]?.character || null;
+  }
+
+  static findTeammate(character: BattleCharacter, battle_state: BattleState): any {
+    const isPlayer = battle_state.teams.player.characters.includes(character);
+    const player_team = isPlayer ? battle_state.teams.player : battle_state.teams.opponent;
+    const teammate = player_team.characters.find(c => c.character.id !== character.character.id);
+    return teammate?.character || null;
+  }
+
+  static generateBasicRogueAction(character: BattleCharacter, psych_deviation: any): string {
+    const actions = [
+      "I lose control and attack wildly!",
+      "I see red and strike at everything around me!",
+      "I abandon all strategy and fight with pure instinct!",
+      "I lash out in frustration at whoever is closest!",
+      "I refuse to follow orders and do what I want!"
+    ];
+
+    return actions[Math.floor(Math.random() * actions.length)];
+  }
+
+  static applyJudgeRulingToAction(
+    original_action: ExecutedAction,
+    judge_decision: JudgeDecision,
+    battle_state: BattleState
+  ): ExecutedAction {
+    const effect = judge_decision.mechanical_effect;
+
+    // Modify action based on judge effect
+    switch (effect.type) {
+      case 'redirect_attack':
+        if (effect.target === 'teammate') {
+          // Find a teammate to attack instead
+          const attacker = this.findCharacter(battle_state, original_action.character_id || '');
+          const teammate = this.findTeammate(attacker!, battle_state);
+          if (teammate) {
+            return {
+              ...original_action,
+              target_id: teammate.id,
+              narrative_description: `${judge_decision.narrative} - Attack redirected to teammate!`
+            };
+          }
+        } else if (effect.target === 'all') {
+          return {
+            ...original_action,
+            target: 'all',
+            narrative_description: `${judge_decision.narrative} - Berserker rage affects everyone!`
+          };
+        }
+        break;
+
+      case 'skip_turn':
+        return {
+          ...original_action,
+          type: 'defend', // Convert to defensive action
+          narrative_description: judge_decision.narrative
+        };
+
+      case 'environmental':
+        return {
+          ...original_action,
+          target: 'environment',
+          narrative_description: `${judge_decision.narrative} - Environmental destruction!`
+        };
+    }
+
+    // Default: return action with judge narrative
+    return {
+      ...original_action,
+      narrative_description: judge_decision.narrative
+    };
+  }
+
+  // ============= PSYCHOLOGY MONITORING SYSTEM =============
+
+  static monitorPsychologyState(
+    character: BattleCharacter,
+    battle_state: BattleState
+  ): {
+    character: BattleCharacter;
+    deviation_risk: number;
+    triggered_action?: string;
+    risk_factors: string[];
+  } | undefined {
+    try {
+      // Create temporary psychology state for deviation calculation
+      const tempPsychState = {
+        mental_stability: character.mental_state?.current_mental_health || 70,
+        stress: character.mental_state?.stress || 30,
+        confidence: character.mental_state?.confidence || 70,
+        team_harmony: character.mental_state?.team_trust || 70,
+        strategic_alignment: character.gameplan_adherence || 70,
+        volatility: 50 // Base volatility
+      };
+
+      // Get teammates for relationship calculations
+      const teammates = battle_state.teams.player.characters
+        .filter(char => char.character.id !== character.character.id)
+        .map(char => char.character as any); // Type cast to work around interface mismatch
+
+      // Calculate deviation risk with enhanced HP triggers
+      const deviationData = calculateDeviationRisk(
+        character.character as any,
+        tempPsychState as any, // Type cast for PsychologyState compatibility
+        teammates
+      );
+
+      const riskThreshold = 65; // Characters deviate above 65% risk
+
+      if (deviationData.current_risk > riskThreshold) {
+        console.log(`🧠 PSYCHOLOGY TRIGGER: ${character.character.name} deviation risk: ${deviationData.current_risk}%`);
+        console.log(`Risk factors: ${deviationData.risk_factors.join(', ')}`);
+
+        // Generate berserker action for high-risk characters
+        const triggeredAction = this.generateDeviationAction(character, deviationData.current_risk);
+
+        return {
+          character,
+          deviation_risk: deviationData.current_risk,
+          triggered_action: triggeredAction,
+          risk_factors: deviationData.risk_factors
+        };
+      }
+
+      return undefined;
+    } catch (error) {
+      console.warn('Psychology monitoring failed:', error);
+      return undefined;
+    }
+  }
+
+  static generateDeviationAction(character: BattleCharacter, risk_level: number): string {
+    const hpPercentage = character.current_health / (character.character.max_health || 100);
+
+    if (hpPercentage <= 0.1 && risk_level > 80) {
+      return 'berserker_rage_all'; // Attack everyone in desperation
+    } else if (hpPercentage <= 0.25 && risk_level > 70) {
+      return 'reckless_assault'; // Abandon defense, all-out attack
+    } else if (risk_level > 75) {
+      return 'ignore_strategy'; // Stop following gameplan
+    } else {
+      return 'mild_insubordination'; // Minor deviation
+    }
+  }
+
+  // Check if character should follow gameplan or deviate based on psychology + HP
+  static checkGameplanAdherence(
+    character: BattleCharacter,
+    planned_action: ExecutedAction,
+    battle_state: BattleState
+  ): {
+    will_follow: boolean;
+    deviated_action?: ExecutedAction;
+    reason: string;
+    adherence_score: number;
+  } {
+    const hpPercentage = character.current_health / (character.character.max_health || 100);
+    let adherenceScore = character.gameplan_adherence || 70; // Base adherence
+    const reasons: string[] = [];
+
+    // HP-based adherence modifiers
+    if (hpPercentage <= 0.1) {
+      adherenceScore -= 50; // Near death = very low adherence
+      reasons.push('Near-death desperation');
+    } else if (hpPercentage <= 0.25) {
+      adherenceScore -= 30; // Critical HP = low adherence
+      reasons.push('Critical injuries affecting judgment');
+    } else if (hpPercentage <= 0.5) {
+      adherenceScore -= 15; // Wounded = reduced adherence
+      reasons.push('Pain and frustration');
+    }
+
+    // Mental state modifiers
+    const stress = character.mental_state?.stress || 0;
+    const confidence = character.mental_state?.confidence || 70;
+
+    if (stress > 70) {
+      adherenceScore -= 20;
+      reasons.push('High stress levels');
+    }
+
+    if (confidence < 30) {
+      adherenceScore -= 15;
+      reasons.push('Low confidence in strategy');
+    }
+
+    // Archetype-based modifiers (simplified for now)
+    const archetype = character.character.archetype;
+    if (archetype === 'beast') {
+      adherenceScore -= 10; // Wild types less likely to follow plans
+      reasons.push('Wild nature resisting structure');
+    }
+
+    const willFollow = adherenceScore > 50;
+    let deviated_action: ExecutedAction | undefined;
+
+    if (!willFollow) {
+      // Generate deviation action based on current state
+      if (hpPercentage <= 0.15) {
+        // Desperate attack on anyone
+        deviated_action = {
+          character_id: character.character.id,
+          type: 'basic_attack',
+          target: 'random_enemy', // Will be resolved by battle system
+          timestamp: Date.now(),
+          narrative_description: 'Desperate all-out assault'
+        };
+        reasons.push('Desperate all-out assault');
+      } else if (stress > 80) {
+        // Panic - defensive action
+        deviated_action = {
+          character_id: character.character.id,
+          type: 'defend',
+          target: character.character.id,
+          timestamp: Date.now(),
+          narrative_description: 'Panic response - going defensive'
+        };
+        reasons.push('Panic response - going defensive');
+      } else {
+        // General insubordination - ignore planned action, do basic attack
+        deviated_action = {
+          character_id: character.character.id,
+          type: 'basic_attack',
+          target: planned_action.target,
+          timestamp: Date.now(),
+          narrative_description: 'Insubordinate attack ignoring coach orders'
+        };
+        reasons.push('Rejecting coaching strategy');
+      }
+    }
+
+    return {
+      will_follow: willFollow,
+      deviated_action,
+      reason: reasons.join('; '),
+      adherence_score: Math.max(0, adherenceScore)
+    };
+  }
+
+  // Check for team chemistry breakdown causing friendly fire
+  static checkTeamChemistryBreakdown(
+    attacker: BattleCharacter,
+    original_target: BattleCharacter,
+    battle_state: BattleState
+  ): {
+    friendly_fire_triggered: boolean;
+    new_target?: BattleCharacter;
+    reason: string;
+  } {
+    const teammates = battle_state.teams.player.characters
+      .filter(char => char.character.id !== attacker.character.id);
+
+    if (teammates.length === 0) {
+      return { friendly_fire_triggered: false, reason: 'No teammates available' };
+    }
+
+    const hpPercentage = attacker.current_health / (attacker.character.max_health || 100);
+    const team_chemistry = battle_state.teams.player.team_chemistry || 70;
+
+    let friendlyFireRisk = 0;
+    const reasons: string[] = [];
+
+    // Base risk from poor team chemistry
+    if (team_chemistry < 30) {
+      friendlyFireRisk += 25;
+      reasons.push('Extremely poor team chemistry');
+    } else if (team_chemistry < 50) {
+      friendlyFireRisk += 15;
+      reasons.push('Poor team relationships');
+    }
+
+    // HP-based frustration increases friendly fire risk
+    if (hpPercentage <= 0.1) {
+      friendlyFireRisk += 30; // Near death = lash out at anyone
+      reasons.push('Near-death frustration');
+    } else if (hpPercentage <= 0.25) {
+      friendlyFireRisk += 20;
+      reasons.push('Critical injuries causing anger');
+    }
+
+    // High stress increases friendly fire
+    const stress = attacker.mental_state?.stress || 0;
+    if (stress > 80) {
+      friendlyFireRisk += 20;
+      reasons.push('Extreme stress levels');
+    }
+
+    // Low team trust
+    const team_trust = attacker.mental_state?.team_trust || 70;
+    if (team_trust < 30) {
+      friendlyFireRisk += 15;
+      reasons.push('Complete loss of trust in teammates');
+    }
+
+    // Archetype-based modifiers
+    const archetype = attacker.character.archetype;
+    if (archetype === 'berserker') {
+      friendlyFireRisk += 10;
+      reasons.push('Berserker rage affecting judgment');
+    }
+
+    const friendlyFireTriggered = friendlyFireRisk > 40; // 40% threshold for friendly fire
+
+    if (friendlyFireTriggered && teammates.length > 0) {
+      // Select teammate with worst relationship or random if no relationship data
+      const targetTeammate = teammates[Math.floor(Math.random() * teammates.length)];
+
+      console.log(`💥 FRIENDLY FIRE: ${attacker.character.name} attacks teammate ${targetTeammate.character.name}! Risk: ${friendlyFireRisk}%`);
+      console.log(`Reasons: ${reasons.join(', ')}`);
+
+      return {
+        friendly_fire_triggered: true,
+        new_target: targetTeammate,
+        reason: reasons.join('; ')
+      };
+    }
+
+    return {
+      friendly_fire_triggered: false,
+      reason: `Team chemistry holding (risk: ${friendlyFireRisk}%)`
+    };
+  }
+
+  // Master psychology integration function - call this before executing any action
+  static processPsychologyEffects(
+    character: BattleCharacter,
+    planned_action: ExecutedAction,
+    battle_state: BattleState
+  ): {
+    final_action: ExecutedAction;
+    psychology_events: string[];
+    deviation_triggered: boolean;
+    friendly_fire_triggered: boolean;
+  } {
+    const events: string[] = [];
+    let finalAction = planned_action;
+    let deviationTriggered = false;
+    let friendlyFireTriggered = false;
+
+    // 1. Check gameplan adherence first
+    const adherenceCheck = this.checkGameplanAdherence(character, planned_action, battle_state);
+
+    if (!adherenceCheck.will_follow && adherenceCheck.deviated_action) {
+      finalAction = adherenceCheck.deviated_action;
+      deviationTriggered = true;
+      events.push(`🧠 STRATEGY DEVIATION: ${character.character.name} - ${adherenceCheck.reason}`);
+      events.push(`   Adherence Score: ${adherenceCheck.adherence_score}% (abandoned planned action)`);
+    }
+
+    // 2. Check for team chemistry breakdown (friendly fire)
+    if (finalAction.type === 'basic_attack' || finalAction.type === 'ability') {
+      const originalTarget = battle_state.teams.opponent.characters.find(char =>
+        char.character.id === finalAction.target_id
+      );
+
+      if (originalTarget) {
+        const chemistryCheck = this.checkTeamChemistryBreakdown(character, originalTarget, battle_state);
+
+        if (chemistryCheck.friendly_fire_triggered && chemistryCheck.new_target) {
+          finalAction = {
+            ...finalAction,
+            target_id: chemistryCheck.new_target.character.id
+          };
+          friendlyFireTriggered = true;
+          events.push(`💥 FRIENDLY FIRE: ${character.character.name} attacks teammate instead!`);
+          events.push(`   Reason: ${chemistryCheck.reason}`);
+        }
+      }
+    }
+
+    return {
+      final_action: finalAction,
+      psychology_events: events,
+      deviation_triggered: deviationTriggered,
+      friendly_fire_triggered: friendlyFireTriggered
+    };
+  }
+
+  // ============= DAMAGE CALCULATION METHODS =============
+
+  static calculateBaseDamage(attacker: BattleCharacter, action: ExecutedAction): number {
+    // BOUNDS CHECK: Ensure attacker and stats exist
+    if (!attacker?.character?.attack) {
+      console.warn('Invalid attacker or missing attack stat');
+      return 0;
+    }
+
+    // Use final stats that include equipment bonuses!
+    const finalStats = calculateFinalStats(attacker.character);
+    const finalAttack = Math.max(0, Math.min(9999, finalStats.attack || 0));
+
+    console.log(`🗡️ COMBAT DEBUG: ${attacker.character.name} final attack: ${finalAttack} (base: ${attacker.character.attack}, weapon bonus included)`);
+
+    // BOUNDS CHECK: Ensure attack stat is valid
+    const baseAttack = finalAttack;
+
+    switch (action.type) {
+      case 'basic_attack':
+        return baseAttack;
+      case 'ability':
+        // Find the ability and get its power
+        const ability = attacker.character.abilities.find(a => (a.id || '') === action.ability_id);
+        if (ability) {
+          // Use helper to get power from any ability type
+          const power = this.getAbilityPower(ability);
+          // Ability power adds to base damage
+          return Math.floor(power * 0.5);
+        }
+        // If ability not found, default to a reduced basic attack
+        return Math.floor(baseAttack * 0.5);
+      case 'defend':
+        return 0; // Defensive actions don't deal damage
+      default:
+        return Math.floor(baseAttack * 0.5); // Reduced damage for other actions
+    }
+  }
+
+  static calculateWeaponDamage(attacker: BattleCharacter, action: ExecutedAction): number {
+    // Get equipped weapon stats from equipment system
+    const weapon = attacker?.character?.equipped_items?.weapon;
+    if (!weapon || !weapon.stats || !weapon.stats.atk) return 0;
+
+    // BOUNDS CHECK: Cap weapon attack value
+    const weaponAttack = Math.max(0, Math.min(999, weapon.stats.atk));
+
+    // Weapon compatibility with character archetype
+    const compatibilityBonus = this.calculateWeaponCompatibility(attacker, weapon);
+
+    // BOUNDS CHECK: Cap total weapon damage
+    return Math.max(0, Math.min(999, weaponAttack + compatibilityBonus));
+  }
+
+  static calculateStrengthBonus(attacker: BattleCharacter): number {
+    // BOUNDS CHECK: Ensure valid strength stat
+    const strength = Math.max(0, Math.min(999, this.getStat(attacker, 'strength')));
+    // BOUNDS CHECK: Cap strength bonus
+    return Math.max(0, Math.min(500, Math.floor(strength * 0.5))); // Each point of strength adds 0.5 damage
+  }
+
+  static calculateArmorDefense(target: BattleCharacter): number {
+    // Use final stats that include equipment bonuses!
+    const finalStats = calculateFinalStats(target.character);
+    const finalDefense = Math.max(0, Math.min(999, finalStats.defense || 0));
+
+    console.log(`🛡️ DEFENSE DEBUG: ${target.character.name} final defense: ${finalDefense} (base: ${target.character.defense}, armor bonus included)`);
+
+    // BOUNDS CHECK: Cap total defense
+    return finalDefense;
+  }
+
+  // ============= PSYCHOLOGY MODIFIER - THE KEY FIX =============
+
+  static calculatePsychologyModifier(
+    attacker: BattleCharacter,
+    target: BattleCharacter,
+    battle_state: BattleState
+  ): number {
+    let modifier = 1.0; // Start at normal performance
+
+    // ATTACKER PSYCHOLOGY EFFECTS
+    const attackerMental = attacker.mental_state;
+
+    // Confidence affects damage output
+    if (attackerMental.confidence > 75) modifier += 0.2; // High confidence = +20% damage
+    else if (attackerMental.confidence < 40) modifier -= 0.3; // Low confidence = -30% damage
+
+    // Stress reduces accuracy and damage
+    if (attackerMental.stress > 70) modifier -= 0.25; // High stress = -25% performance
+    else if (attackerMental.stress < 30) modifier += 0.1; // Low stress = +10% performance
+
+    // Mental health affects overall combat ability
+    if (attackerMental.current_mental_health < 50) {
+      modifier -= (50 - attackerMental.current_mental_health) * 0.01; // -1% per point below 50
+    }
+
+    // Battle focus affects precision
+    if (attackerMental.battle_focus > 80) modifier += 0.15; // Sharp focus = +15% damage
+    else if (attackerMental.battle_focus < 40) modifier -= 0.2; // Poor focus = -20% damage
+
+    // Team trust affects performance when fighting alongside teammates
+    const team_morale = battle_state.global_morale.player;
+    if (team_morale > 70 && attackerMental.team_trust > 70) {
+      modifier += 0.1; // Good team synergy = +10% damage
+    } else if (team_morale < 40 || attackerMental.team_trust < 30) {
+      modifier -= 0.15; // Poor team dynamics = -15% damage
+    }
+
+    // RELATIONSHIP MODIFIERS
+    const relationship = attacker.relationship_modifiers.find(
+      rel => rel.with_character === target.character.name.toLowerCase().replace(/\s+/g, '_')
+    );
+
+    if (relationship) {
+      switch (relationship.relationship) {
+        case 'enemy':
+          modifier += 0.1; // Fighting enemies is motivating
+          break;
+        case 'rival':
+          modifier += 0.05; // Slight boost from competition
+          break;
+        case 'ally':
+          // This is problematic - reluctant to hurt allies
+          if (attacker.character.id !== target.character.id) { // Friendly fire
+            modifier -= 0.4; // Huge penalty for attacking allies
+          }
+          break;
+      }
+    }
+
+    // Ensure modifier stays within reasonable bounds
+    return Math.max(0.1, Math.min(2.0, modifier));
+  }
+
+  // ============= PHYSICAL COMBAT SUPPORT METHODS =============
+
+  static calculateWeaponCompatibility(attacker: BattleCharacter, weapon: { type?: string; attributes?: string[] }): number {
+    // Check if weapon is preferred for this character archetype
+    const archetype = attacker.character.archetype;
+    const weaponType = weapon.type;
+
+    // If weapon has no type, return neutral (no bonus/penalty)
+    if (!weaponType) return 0;
+
+    // This would be based on equipment system data
+    const compatibilityMap: Record<string, string[]> = {
+      'warrior': ['sword', 'hammer', 'spear', 'shield'],
+      'mage': ['staff', 'orb', 'tome'],
+      'assassin': ['dagger', 'bow', 'knife'],
+      'trickster': ['whip', 'claws', 'sonic'],
+      'detective': ['cane', 'revolver', 'magnifying_glass']
+    };
+
+    const preferredWeapons = compatibilityMap[archetype] || [];
+    const isCompatible = preferredWeapons.includes(weaponType);
+
+    return isCompatible ? 10 : 0; // Bonus for compatible weapons, neutral for others
+  }
+
+  static calculateStatusEffects(
+    attacker: BattleCharacter,
+    target: BattleCharacter,
+    action: ExecutedAction,
+    damage: number
+  ): string[] {
+    const effects: string[] = [];
+
+    // Critical hits can cause status effects
+    if (this.wasCriticalHit(attacker, 1.0)) {
+      effects.push('stunned'); // Critical hits stun
+    }
+
+    // High damage can cause injuries
+    if (damage > target.character.max_health * 0.3) {
+      effects.push('injured');
+    }
+
+    // Psychological effects from taking damage
+    if (damage > target.character.max_health * 0.5) {
+      // Major damage affects mental state
+      target.mental_state.confidence = Math.max(0, target.mental_state.confidence - 15);
+      target.mental_state.stress = Math.min(100, target.mental_state.stress + 20);
+      effects.push('shaken');
+    }
+
+    return effects;
+  }
+
+  static checkCounterAttack(
+    target: BattleCharacter,
+    attacker: BattleCharacter,
+    damage_taken: number
+  ): boolean {
+    // Only if target is still alive and has good reflexes
+    if (target.current_health <= 0) return false;
+
+    const speed = this.getStat(target, 'speed');
+    const mentalFocus = target.mental_state.battle_focus;
+
+    // Psychology affects counter-attack chance
+    const baseChance = speed * 0.001; // Base chance from speed
+    const psychologyBonus = mentalFocus * 0.0005; // Focus improves reaction
+    const damageBonus = damage_taken > 50 ? 0.1 : 0; // Desperation counter
+
+    const totalChance = baseChance + psychologyBonus + damageBonus;
+
+    return Math.random() < totalChance;
+  }
+
+  static wasCriticalHit(attacker: BattleCharacter, psychology_modifier: number): boolean {
+    const baseCritChance = this.getCritChance(attacker);
+
+    // Psychology affects crit chance
+    const mentalBonus = attacker.mental_state.battle_focus > 80 ? 0.02 : 0;
+    const confidenceBonus = attacker.mental_state.confidence > 75 ? 0.01 : 0;
+
+    const totalCritChance = baseCritChance + mentalBonus + confidenceBonus;
+
+    return Math.random() < totalCritChance;
+  }
+
+  static generatePhysicalCombatNarrative(
+    attacker: BattleCharacter,
+    target: BattleCharacter,
+    action: ExecutedAction,
+    damage: number,
+    psychology_modifier: number
+  ): string {
+    const attackerName = attacker.character.name;
+    const targetName = target.character.name;
+
+    let narrative = '';
+
+    // Base action narrative
+    switch (action.type) {
+      case 'basic_attack':
+        narrative = `${attackerName} strikes ${targetName} with their weapon`;
+        break;
+      case 'ability':
+        narrative = `${attackerName} uses a special ability against ${targetName}`;
+        break;
+      default:
+        narrative = `${attackerName} attacks ${targetName}`;
+    }
+
+    // Add psychology effects to narrative
+    if (psychology_modifier > 1.2) {
+      narrative += ', fighting with exceptional determination';
+    } else if (psychology_modifier < 0.8) {
+      narrative += ', but their strikes lack conviction';
+    }
+
+    // Add damage result
+    if (damage > target.character.max_health * 0.4) {
+      narrative += `, dealing devastating damage (${damage})!`;
+    } else if (damage > target.character.max_health * 0.2) {
+      narrative += `, landing a solid hit (${damage})!`;
+    } else {
+      narrative += `, but the attack is largely deflected (${damage}).`;
+    }
+
+    return narrative;
+  }
+
+  static generateAudienceReaction(damage: number, health_change: number): string {
+    if (health_change <= 0) return "The crowd holds its breath...";
+
+    if (damage > 100) return "The crowd erupts in amazement at the devastating blow!";
+    if (damage > 50) return "The audience cheers at the powerful strike!";
+    if (damage > 20) return "The crowd murmurs appreciatively.";
+    return "The audience watches intently...";
+  }
+
+  // ============= GAMEPLAN ADHERENCE CHECK - PSYCHOLOGY AFFECTS FOLLOWING STRATEGY =============
+
+  static performGameplanAdherenceCheck(character: BattleCharacter, planned_action?: PlannedAction): GameplanAdherenceCheck {
+    // This is WHERE psychology matters - will they follow the coach's strategy?
+    const baseAdherence = character.gameplan_adherence;
+    const mental_healthModifier = (character.mental_state.current_mental_health - 50) * 0.5;
+    const team_chemistryModifier = (character.mental_state.team_trust - 50) * 0.3;
+    const stressModifier = -character.mental_state.stress * 0.4;
+
+    // Relationship modifiers
+    let relationshipModifier = 0;
+    character.relationship_modifiers.forEach(rel => {
+      if (rel.relationship === 'enemy' && rel.strength < -50) {
+        relationshipModifier -= 20; // Presence of enemies affects focus
+      } else if (rel.relationship === 'ally' && rel.strength > 50) {
+        relationshipModifier += 10; // Presence of allies increases trust in strategy
+      }
+    });
+
+    const finalAdherence = Math.max(0, Math.min(100,
+      baseAdherence + mental_healthModifier + team_chemistryModifier + stressModifier + relationshipModifier
+    ));
+
+    // Determine result
+    let checkResult: 'follows_strategy' | 'slight_deviation' | 'improvises' | 'goes_rogue';
+    if (finalAdherence >= 80) checkResult = 'follows_strategy';
+    else if (finalAdherence >= 60) checkResult = 'slight_deviation';
+    else if (finalAdherence >= 30) checkResult = 'improvises';
+    else checkResult = 'goes_rogue';
+
+    let reasoning = `${character.character.name} `;
+    if (checkResult === 'follows_strategy') reasoning += "follows the coach's strategy precisely.";
+    else if (checkResult === 'slight_deviation') reasoning += "mostly follows the plan with minor adjustments.";
+    else if (checkResult === 'improvises') reasoning += "adapts the strategy based on their assessment.";
+    else reasoning += "completely ignores the gameplan and acts independently.";
+
+    if (character.mental_state.stress > 70) reasoning += " High stress is affecting their decision-making.";
+    if (character.mental_state.current_mental_health < 40) reasoning += " Poor mental health clouds their judgment.";
+
+    return {
+      base_adherence: baseAdherence,
+      mental_healthModifier,
+      team_chemistryModifier,
+      relationship_modifier: relationshipModifier,
+      stress_modifier: stressModifier,
+      final_adherence: finalAdherence,
+      check_result: checkResult,
+      reasoning
+    };
+  }
+
+
+  // ============= INTEGRATION WITH EXISTING BATTLE FLOW =============
+
+  static async executeRound(battle_state: BattleState, player_actions: Record<string, PlannedAction>): Promise<CombatRound> {
+    const round: CombatRound = {
+      round_number: ++battle_state.current_round,
+      initiative: this.calculateInitiative(battle_state, player_actions),
+      actions: [],
+      morale_events: [],
+      rogue_actions: [],
+      round_outcome: {
+        winner: 'draw',
+        key_events: [],
+        morale_shift: {},
+        strategic_advantages: [],
+        unexpected_developments: [],
+        judge_commentary: ''
+      },
+      team_morale_changes: []
+    };
+
+    // Execute actions in initiative order
+    for (const initiativeEntry of round.initiative) {
+      const action = await this.executeCharacterAction(
+        battle_state,
+        initiativeEntry,
+        round
+      );
+
+      round.actions.push(action);
+
+      // Apply physical combat results
+      this.applyPhysicalCombatResults(action, battle_state);
+
+      // Check for morale events
+      const moraleEvents = this.checkForMoraleEvents(action, battle_state);
+      round.morale_events.push(...moraleEvents);
+    }
+
+    return round;
+  }
+
+  static async executeCharacterAction(
+    battle_state: BattleState,
+    initiative_entry: { character_id: string; team: 'player' | 'opponent'; speed: number; planned_action?: PlannedAction },
+    round: CombatRound
+  ): Promise<CombatAction> {
+    const character = this.findCharacter(battle_state, initiative_entry.character_id);
+    if (!character) {
+      throw new Error(`Character ${initiative_entry.character_id} not found`);
+    }
+
+    // Check if character will follow strategy (psychology affects gameplan compliance)
+    const gameplanCheck = this.performGameplanAdherenceCheck(character, initiative_entry.planned_action);
+
+    let actualAction: ExecutedAction;
+    let actionType: 'planned' | 'improvised' | 'panicked' | 'inspired' = 'planned';
+
+    if (gameplanCheck.check_result === 'follows_strategy') {
+      // Character follows the coach's plan exactly
+      actualAction = this.convertPlannedToExecuted(initiative_entry.planned_action);
+    } else {
+      // Character improvises - but this affects STRATEGY, not combat mechanics
+      actionType = 'improvised';
+      actualAction = this.generateImprovisedAction(character, gameplanCheck, battle_state);
+    }
+
+    // Find target
+    const target = this.findTarget(actualAction, battle_state);
+
+    // Execute PHYSICAL combat
+    const outcome = target ?
+      await this.executePhysicalAction(character, target, actualAction, battle_state) :
+      this.executeNonCombatAction(character, actualAction, battle_state);
+
+    return {
+      character_id: character.character.id,
+      action_type: actionType,
+      original_plan: initiative_entry.planned_action,
+      actual_action: actualAction,
+      gameplan_check: gameplanCheck,
+      psychology_factors: [],
+      outcome
+    };
+  }
+
+  // ============= UTILITY METHODS =============
+
+  static findCharacter(battle_state: BattleState, character_id: string): BattleCharacter | null {
+    const playerChar = battle_state.teams.player.characters.find(char => char.character.id === character_id);
+    if (playerChar) return playerChar;
+
+    const opponentChar = battle_state.teams.opponent.characters.find(char => char.character.id === character_id);
+    return opponentChar || null;
+  }
+
+  static findTarget(action: ExecutedAction, battle_state: BattleState): BattleCharacter | null {
+    if (!action.target_id) return null;
+    return this.findCharacter(battle_state, action.target_id);
+  }
+
+  static convertPlannedToExecuted(planned?: PlannedAction): ExecutedAction {
+    if (!planned) {
+      return {
+        type: 'basic_attack',
+        narrative_description: 'Performs a basic attack'
+      };
+    }
+
+    // Map planned action types to executed action types
+    const typeMapping: Record<string, ExecutedAction['type']> = {
+      'support': 'help_ally',
+      'coach_suggested': 'basic_attack',
+      'ability': 'ability',
+      'basic_attack': 'basic_attack',
+      'defend': 'defend'
+    };
+
+    return {
+      type: typeMapping[planned.type] || 'basic_attack',
+      target_id: planned.target_id,
+      ability_id: planned.ability_id,
+      narrative_description: `Executes planned ${planned.type}`
+    };
+  }
+
+  static generateImprovisedAction(
+    character: BattleCharacter,
+    gameplan_check: GameplanAdherenceCheck,
+    battle_state: BattleState
+  ): ExecutedAction {
+    // Improvised actions are about strategy adaptation, not magical psychology
+
+    if (character.mental_state.stress > 80) {
+      return {
+        type: 'flee',
+        narrative_description: `${character.character.name} panics and tries to retreat!`
+      };
+    }
+
+    if (character.mental_state.current_mental_health < 30) {
+      return {
+        type: 'basic_attack',
+        target_id: this.findRandomEnemy(character, battle_state)?.character.id,
+        narrative_description: `${character.character.name} attacks wildly in a berserker rage!`
+      };
+    }
+
+    return {
+      type: 'defend',
+      narrative_description: `${character.character.name} ignores the gameplan and plays defensively.`
+    };
+  }
+
+  private static findRandomEnemy(character: BattleCharacter, battle_state: BattleState): BattleCharacter | null {
+    const enemyTeam = battle_state.teams.player.characters.includes(character)
+      ? battle_state.teams.opponent
+      : battle_state.teams.player;
+
+    const enemies = enemyTeam.characters.filter(char => char.current_health > 0);
+    return enemies.length > 0 ? enemies[Math.floor(Math.random() * enemies.length)] : null;
+  }
+
+  private static calculateInitiative(battle_state: BattleState, player_actions: Record<string, PlannedAction>) {
+    const allCharacters = [
+      ...battle_state.teams.player.characters.map(char => ({ ...char, team: 'player' as const })),
+      ...battle_state.teams.opponent.characters.map(char => ({ ...char, team: 'opponent' as const }))
+    ];
+
+    return allCharacters
+      .filter(char => char.current_health > 0)
+      .map(char => {
+        const baseSpeed = char.character.speed;
+        // Psychology affects initiative through stress/focus
+        const mentalSpeedModifier = this.calculateMentalSpeedModifiers(char);
+        const finalSpeed = baseSpeed + mentalSpeedModifier;
+
+        return {
+          character_id: char.character.id,
+          team: char.team,
+          speed: finalSpeed,
+          mental_modifiers: mentalSpeedModifier,
+          gameplan_adherence: char.gameplan_adherence,
+          planned_action: player_actions[char.character.id]
+        };
+      })
+      .sort((a, b) => b.speed - a.speed);
+  }
+
+  private static calculateMentalSpeedModifiers(character: BattleCharacter): number {
+    let modifier = 0;
+
+    // Psychology affects reaction time and initiative
+    modifier -= character.mental_state.stress * 0.2; // Stress slows you down
+    modifier += (character.mental_state.confidence - 50) * 0.1; // Confidence speeds you up
+    modifier += (character.mental_state.battle_focus - 50) * 0.15; // Focus affects reaction time
+
+    return Math.floor(modifier);
+  }
+
+  private static applyPhysicalCombatResults(action: CombatAction, battle_state: BattleState): void {
+    // Physical combat results are already applied in executePhysicalAction
+    // This can handle additional effects like status conditions, team morale changes, etc.
+  }
+
+  private static checkForMoraleEvents(action: CombatAction, battle_state: BattleState): MoraleEvent[] {
+    const events: MoraleEvent[] = [];
+
+    // Check if someone was defeated
+    const target = this.findTarget(action.actual_action, battle_state);
+    if (target && target.current_health <= 0) {
+      events.push({
+        event_type: 'ally_down',
+        description: `${target.character.name} has been defeated!`,
+        morale_impact: -20,
+        affected_team: 'player', // This would be determined by which team the target is on
+        triggering_character: action.character_id,
+        cascade_effects: []
+      });
+    }
+
+    return events;
+  }
+
+  private static executeNonCombatAction(
+    character: BattleCharacter,
+    action: ExecutedAction,
+    battle_state: BattleState
+  ): PhysicalActionOutcome {
+    // Handle non-combat actions like defend, flee, etc.
+    return {
+      success: true,
+      damage: 0,
+      effects: [],
+      narrative_description: action.narrative_description,
+      audience_reaction: "The crowd watches the defensive maneuver...",
+      physical_damage: {
+        base_damage: 0,
+        weapon_damage: 0,
+        strength_bonus: 0,
+        armor_reduction: 0,
+        psychology_modifier: 1,
+        final_damage: 0,
+        damage_breakdown: ['No damage - defensive action']
+      },
+      health_change: 0,
+      armor_damage: 0,
+      status_effectsApplied: [],
+      counter_attack_triggered: false
+    };
+  }
+}
+
+export default PhysicalBattleEngine;

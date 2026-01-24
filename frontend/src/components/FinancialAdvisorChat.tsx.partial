@@ -1,0 +1,2486 @@
+'use client';
+
+import * as React from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
+import { motion } from 'framer-motion';
+import SafeMotion from './SafeMotion';
+import { useMobileSafeMotion } from '@/hooks/useMobileSafeMotion';
+import { Send, DollarSign, AlertTriangle, TrendingUp, Clock } from 'lucide-react';
+import { characterAPI } from '../services/apiClient';
+import { api } from '../services/apiClient';
+// Universal Chat Library
+import { 
+  enrichCharacter, 
+  ensureBrevityTag, 
+  twoSentenceCap, 
+  BREVITY_TAGS,
+  sendChat,
+  singleFlight,
+  chatFlightKey,
+  log, 
+  warn, 
+  error,
+  logAgentKey,
+  logResponse
+} from '@/lib/chat';
+import { mustResolveAgentKey } from '@/lib/chat/agentKeys';
+import { Character, FinancialDecision as CharacterFinancialDecision } from '../data/characters';
+import ConflictContextService from '../services/conflictContextService';
+import EventContextService from '../services/eventContextService';
+import { makeFinancialJudgeDecision, FinancialEventContext } from '../data/aiJudgeSystem';
+import { FinancialPromptTemplateService } from '../data/financialPromptTemplateService';
+import ChatFeedback, { ChatFeedbackData } from './ChatFeedback';
+import { ChatResponseData, isChatResponseData } from '@/types/socket';
+import { getCharacterFinancialTier, type FinancialTier } from '@/utils/finance';
+
+// saveDecision removed - now using memory persist system
+
+// Financial topics for category selection
+const FIN_TOPICS = [
+  'budget', 'spending', 'savings', 'debt',
+  'investing', 'income', 'taxes', 'retirement', 'crypto'
+] as const;
+
+interface Message {
+  id: string;
+  type: 'player' | 'character' | 'system' | 'decision';
+  content: string;
+  timestamp: Date;
+  decision?: {
+    id: string;
+    amount: number;
+    options: string[];
+    reasoning: string;
+    urgency: 'low' | 'medium' | 'high';
+  };
+}
+
+interface FinancialDecision {
+  id: string;
+  characterId: string;
+  amount: number;
+  description: string;
+  options: string[];
+  characterReasoning: string;
+  urgency: 'low' | 'medium' | 'high';
+  timestamp: Date;
+  coachInfluenceAttempts: number;
+  finalDecision?: string;
+  status: 'pending' | 'decided' | 'influenced';
+}
+
+type Financials = {
+  wallet: number;
+  debt?: number;
+  financialStress: number;
+  coachTrustLevel: number;
+  spendingPersonality: 'frugal' | 'moderate' | 'spender';
+  recentDecisions: any[];
+  monthlyEarnings: number;
+  equipment_budget?: number;
+  consumables_budget?: number;
+};
+
+interface EnhancedCharacter extends Omit<Character, 'financials'> {
+  baseName: string;
+  financials?: Financials;
+  displayBondLevel?: number;
+}
+
+interface FinancialAdvisorChatProps {
+  selectedCharacterId: string;
+  selectedCharacter: EnhancedCharacter | null;
+  availableCharacters: EnhancedCharacter[];
+  onCharacterChange: (characterId: string) => void;
+}
+
+// Helper function to get character ID following the pattern from other chats
+const getCharacterId = (character: EnhancedCharacter): string => {
+  // Always use the database ID for API calls
+  return character.id;
+};
+
+// Budget Allocation UI Component
+interface BudgetAllocationUIProps {
+  selectedCharacter: EnhancedCharacter;
+  onBudgetUpdate: (equipmentBudget: number, consumablesBudget: number) => void;
+}
+
+const BudgetAllocationUI: React.FC<BudgetAllocationUIProps> = ({ selectedCharacter, onBudgetUpdate }) => {
+  const [equipmentBudget, setEquipmentBudget] = useState(selectedCharacter.financials?.equipment_budget || 0);
+  const [consumablesBudget, setConsumablesBudget] = useState(selectedCharacter.financials?.consumables_budget || 0);
+  const [isUpdating, setIsUpdating] = useState(false);
+  const [showBudgetUI, setShowBudgetUI] = useState(false);
+
+  const currentWallet = selectedCharacter.financials?.wallet || 0;
+  const totalBudgeted = equipmentBudget + consumablesBudget;
+  const availableForBudgeting = currentWallet;
+  const isValidBudget = totalBudgeted <= availableForBudgeting;
+
+  const handleBudgetSubmit = async () => {
+    if (!isValidBudget || isUpdating) return;
+    
+    setIsUpdating(true);
+    try {
+      await characterAPI.allocateBudget(selectedCharacter.id, equipmentBudget, consumablesBudget);
+      onBudgetUpdate(equipmentBudget, consumablesBudget);
+      setShowBudgetUI(false);
+    } catch (error) {
+      console.error('Error updating budget:', error);
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
+  return (
+    <div className="mb-4">
+      {!showBudgetUI ? (
+        <div className="flex items-center justify-between p-3 bg-blue-900/20 rounded-lg border border-blue-500/30">
+          <div className="flex items-center gap-4">
+            <div className="text-sm">
+              <span className="text-gray-400">Equipment Budget: </span>
+              <span className="text-blue-400 font-semibold">${(selectedCharacter.financials?.equipment_budget || 0).toLocaleString()}</span>
+            </div>
+            <div className="text-sm">
+              <span className="text-gray-400">Consumables Budget: </span>
+              <span className="text-green-400 font-semibold">${(selectedCharacter.financials?.consumables_budget || 0).toLocaleString()}</span>
+            </div>
+          </div>
+          <button
+            onClick={() => setShowBudgetUI(true)}
+            className="px-3 py-1 bg-blue-600 hover:bg-blue-500 rounded-lg text-sm transition-colors"
+          >
+            Set Budget
+          </button>
+        </div>
+      ) : (
+        <div className="p-4 bg-blue-900/20 rounded-lg border border-blue-500/30">
+          <h3 className="text-lg font-semibold mb-3 text-blue-300">Allocate Equipment & Consumables Budget</h3>
+          
+          <div className="grid grid-cols-2 gap-4 mb-4">
+            <div>
+              <label className="block text-sm text-gray-400 mb-2">Equipment Budget</label>
+              <input
+                type="number"
+                value={equipmentBudget}
+                onChange={(e) => setEquipmentBudget(Math.max(0, parseInt(e.target.value) || 0))}
+                className="w-full px-3 py-2 bg-gray-800 border border-gray-600 rounded-lg text-white"
+                placeholder="0"
+              />
+            </div>
+            <div>
+              <label className="block text-sm text-gray-400 mb-2">Consumables Budget</label>
+              <input
+                type="number"
+                value={consumablesBudget}
+                onChange={(e) => setConsumablesBudget(Math.max(0, parseInt(e.target.value) || 0))}
+                className="w-full px-3 py-2 bg-gray-800 border border-gray-600 rounded-lg text-white"
+                placeholder="0"
+              />
+            </div>
+          </div>
+
+          <div className="mb-4 text-sm">
+            <div className="flex justify-between items-center mb-1">
+              <span className="text-gray-400">Available Wallet:</span>
+              <span className="text-green-400">${availableForBudgeting.toLocaleString()}</span>
+            </div>
+            <div className="flex justify-between items-center mb-1">
+              <span className="text-gray-400">Total Budgeted:</span>
+              <span className={isValidBudget ? 'text-blue-400' : 'text-red-400'}>${totalBudgeted.toLocaleString()}</span>
+            </div>
+            <div className="flex justify-between items-center">
+              <span className="text-gray-400">Remaining:</span>
+              <span className={isValidBudget ? 'text-gray-300' : 'text-red-400'}>${(availableForBudgeting - totalBudgeted).toLocaleString()}</span>
+            </div>
+          </div>
+
+          {!isValidBudget && (
+            <div className="text-red-400 text-sm mb-3">
+              Budget exceeds available wallet amount!
+            </div>
+          )}
+
+          <div className="flex gap-2">
+            <button
+              onClick={handleBudgetSubmit}
+              disabled={!isValidBudget || isUpdating}
+              className="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-600 disabled:cursor-not-allowed rounded-lg transition-colors"
+            >
+              {isUpdating ? 'Updating...' : 'Set Budget'}
+            </button>
+            <button
+              onClick={() => setShowBudgetUI(false)}
+              className="px-4 py-2 bg-gray-600 hover:bg-gray-500 rounded-lg transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// Get character-specific starting wallet amount based on their historical background
+const getCharacterStartingWallet = (character: EnhancedCharacter): number => {
+  const name = character.name.toLowerCase().replace(/["\s]+/g, ' ').trim();
+  const baseAmount = 10000; // Base amount
+  
+  const characterMultipliers: Record<string, number> = {
+    // Royal/Wealthy Tier
+    'cleopatra': 18,
+    'genghis khan': 16,
+    'sun wukong': 14,
+    'dracula': 12,
+    'achilles': 10,
+    'merlin': 9,
+    
+    // Wealthy/Professional Tier  
+    'agent x': 5,
+    'cyborg': 4.5,
+    'sherlock holmes': 4,
+    'tesla': 3,
+    
+    // Middle Class Tier
+    'billy the kid': 2.5,
+    'sammy "slugger" sullivan': 2,
+    'robin hood': 1.5,
+    
+    // Poor Tier (0 money, but they get extra healing potion)
+    'joan of arc': 0,
+    'frankenstein\'s monster': 0,
+    'fenrir': 0,
+    'zeta': 0
+  };
+  
+  const multiplier = characterMultipliers[name] || 2; // default middle class
+  return Math.floor(baseAmount * multiplier);
+};
+
+// Get character monthly earnings (battles are main income source)
+const getCharacterFinancialTier = (characterName: string): 'poor' | 'modest' | 'wealthy' | 'royal' => {
+  // Based on handoff document wealth tiers
+  const royalTier = ['Cleopatra VII', 'Genghis Khan', 'Sun Wukong', 'Count Dracula', 'Achilles'];
+  const wealthyTier = ['Nikola Tesla', 'Joan of Arc', 'Merlin'];
+  const modestTier = ['Sherlock Holmes', 'Robin Hood', 'Frankenstein', 'Agent X'];
+  
+  if (royalTier.some(name => characterName.includes(name) || name.includes(characterName))) return 'royal';
+  if (wealthyTier.some(name => characterName.includes(name) || name.includes(characterName))) return 'wealthy';
+  if (modestTier.some(name => characterName.includes(name) || name.includes(characterName))) return 'modest';
+  return 'poor';
+};
+
+const getCharacterMonthlyEarnings = (character: EnhancedCharacter): number => {
+  return 2000; // Base allowance, real money comes from battles
+};
+
+// Helper function to extract assistant text from API responses
+const extractAssistantText = (raw: string): string => {
+  try {
+    const p = JSON.parse(raw);
+    if (p && typeof p === 'object') {
+      if (typeof p.text === 'string') return p.text;
+      if (typeof p.content === 'string') return p.content;
+    }
+  } catch {}
+  return raw;
+};
+
+// Get character-specific starting wallet amount based on their historical background
+// Removed wallet calculation functions - we just use DB values directly
+
+// Get character-appropriate decision amounts
+const getCharacterAppropriateAmount = (character: EnhancedCharacter, category: string, minAmount: number, maxAmount: number): number => {
+  let tier: FinancialTier;
+  try {
+    tier = getCharacterFinancialTier(character);
+  } catch (error) {
+    console.error(`Failed to determine financial tier for ${character.name || character.id}: ${error}`);
+    throw new Error(`Cannot determine appropriate spending amounts without financial tier data for ${character.name || character.id}`, { cause: error });
+  }
+  // NO FALLBACKS - wallet must be a number from DB
+  if (typeof character.financials?.wallet !== 'number') {
+    throw new Error(`wallet must be a number for ${character.name || character.id}`);
+  }
+  const wallet = character.financials.wallet;
+  
+  // Base multipliers by tier
+  const tierMultipliers = {
+    royal: 2.0,
+    noble: 1.5,
+    wealthy: 1.2,
+    middle: 1.0,
+    poor: 0.6
+  };
+  
+  // Category adjustments
+  const categoryMultipliers = {
+    luxury: 1.5,      // Cars, jewelry, etc.
+    investment: 1.0,   // Crypto, stocks, etc.
+    training: 0.8,     // Equipment, training
+    business: 1.2,     // Side businesses
+    equipment: 0.7     // Weapons, armor
+  };
+  
+  const baseAmount = minAmount + (maxAmount - minAmount) * 0.5;
+  const tierAdjusted = baseAmount * tierMultipliers[tier];
+  const categoryAdjusted = tierAdjusted * (categoryMultipliers[category] || 1.0);
+  
+  // Don't exceed 25% of wallet for any single decision
+  const maxAffordable = wallet * 0.25;
+  
+  return Math.floor(Math.min(categoryAdjusted, maxAffordable));
+};
+
+// Helper to trigger character reaction after system events
+async function triggerCharacterReactionAfterSystemEvent(params: {
+  agentKey: string;
+  usercharId: string;
+  domain: 'financial';
+  reasonCode: 'unaffordable' | 'insufficient_funds' | string;
+  details?: Record<string, any>;
+  sessionId: string;
+}) {
+  const { agentKey, usercharId, domain, reasonCode, details, sessionId } = params;
+
+  const payload = {
+    agentKey,
+    message: 'How do you feel about the recent loan decision?', // Trigger reaction to system event
+    chatType: domain,
+    domain,
+    usercharId,
+    meta: {
+      usercharId: usercharId, // IMPORTANT: Backend looks for this in meta.usercharId
+      recentSystemEvent: {
+        type: 'LOAN_DECISION',
+        status: 'DENIED',
+        reasonCode,
+        details: details ?? {}
+      }
+    }
+  };
+
+  const res = await sendChat(sessionId, payload);
+  return res;
+}
+
+const FinancialAdvisorChat: React.FC<FinancialAdvisorChatProps> = ({
+  selectedCharacterId,
+  selectedCharacter,
+  availableCharacters,
+  onCharacterChange
+}) => {
+  // Memoized financial tier calculation with error handling
+  const financialTier = React.useMemo<FinancialTier | null>(() => {
+    if (!selectedCharacter) return null;
+    try {
+      return getCharacterFinancialTier(selectedCharacter);
+    } catch (error) {
+      console.error(`Failed to determine financial tier for ${selectedCharacter.name || selectedCharacter.id}: ${error}`);
+      return null;
+    }
+  }, [selectedCharacter?.id, selectedCharacter?.financial_tier, selectedCharacter?.subscription_tier, selectedCharacter?.rarity, selectedCharacter?.owner?.subscription_tier]);
+
+  const { isMobile, getSafeMotionProps } = useMobileSafeMotion();
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [inputMessage, setInputMessage] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [pendingDecision, setPendingDecision] = useState<FinancialDecision | null>(null);
+  const [isCommittingDecision, setIsCommittingDecision] = useState(false);
+  const [topic, setTopic] = useState<string>('');
+  const [sessionId, setSessionId] = useState<string>(() => 
+    selectedCharacter ? `financial_${selectedCharacter.id}` : ''
+  );
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const generatedForCharRef = useRef<string | null>(null);
+  const genTimerRef = useRef<number | null>(null);
+  const reactionHandledRef = useRef(false);
+  
+  // Debug: Component mount detection
+  useEffect(() => {
+    console.log('🏦 [FINANCIAL ADVISOR] Component mounted, selectedCharacter:', selectedCharacter?.name || 'None');
+    return () => console.log('🏦 [FINANCIAL ADVISOR] Component unmounting');
+  }, []);
+  
+  const [connected, setConnected] = useState(true); // Always connected with HTTP API
+  const [connectionError, setConnectionError] = useState<string | null>(null);
+  const [lastFeedback, setLastFeedback] = useState<ChatFeedbackData | null>(null);
+  
+  // Deduplication guards to prevent multiple requests
+  const didInitRef = useRef<Record<string, boolean>>({});
+  const inFlightRef = useRef<Record<string, Promise<any> | null>>({});
+  const [sending, setSending] = useState(false);
+  
+  // Mutex: prevent concurrent sends / rapid re-clicks
+  const isSendingRef = useRef(false);
+  
+  // Track coach recommendation for scoring
+  const [lastCoachRecommendation, setLastCoachRecommendation] = useState<'approve' | 'reject' | null>(null);
+  
+  // Guard the greeting useEffect so it runs once per session
+  const greetedRef = useRef(false);
+  
+  // helpers (same normalize you used elsewhere)
+  const normalizeCode = (s?: string) =>
+    (s ?? '').trim().toLowerCase().replace(/['']/g, '').replace(/\s+/g, '_');
+
+  const canonicalCharacterId = useMemo(() => {
+    const sc = selectedCharacter as any;
+    // Use userchar ID directly - no fallback conversions that cause service lookup failures
+    const raw = sc?.id;
+    return normalizeCode(raw);
+  }, [selectedCharacter]);
+
+  const instanceId = selectedCharacter?.id ?? selectedCharacter?.slug ?? canonicalCharacterId;
+
+  // Derive a merged, defaulted view of the character for rendering & requests
+  const characterForChat = useMemo(() => {
+    if (!selectedCharacter) return null;
+
+    const defaults: Partial<Financials> = {
+      financialStress: 30,
+      coachTrustLevel: 50,
+      spendingPersonality: 'moderate',
+      recentDecisions: [],
+    };
+
+    const sc = selectedCharacter;
+    const fin = sc.financials ?? {};
+    
+    // Just use the DB value directly - no calculations!
+    console.log(`[WALLET_DEBUG] Character: ${sc.name} (ID: ${sc.id}), DB wallet: ${fin.wallet}`);
+    
+    return {
+      ...sc,
+      financials: {
+        ...defaults,
+        ...fin,
+        // wallet comes directly from DB via fin.wallet
+        monthlyEarnings: fin.monthlyEarnings, // NO FALLBACK - must be number from DB
+      } as Financials,
+    };
+  }, [selectedCharacter]);
+  
+  // Using universal chat library for single-flight protection
+  const scrollToBottom = () => {
+    if (messagesEndRef.current) {
+      const container = messagesEndRef.current.parentElement;
+      if (container) {
+        container.scrollTop = container.scrollHeight;
+      }
+    }
+  };
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages]);
+
+  // HTTP API connection setup - using persistent memory chat system
+  useEffect(() => {
+    if (!selectedCharacter) return;
+    
+    // Clear messages and reset state when switching characters
+    setMessages([]);
+    setPendingDecision(null);
+    setLastCoachRecommendation(null);
+    
+    // Only reset session when instanceId changes (new character) - use stable ID for conversation memory
+    setSessionId(`financial_${instanceId}`);
+    greetedRef.current = false; // allow a new one-time greeting for the new session
+    
+    console.log('🏦 [FinancialAdvisor] Switched to character:', characterForChat?.name, 'with wallet:', characterForChat?.financials?.wallet);
+    setConnected(true);
+    setConnectionError(null);
+  }, [instanceId]); // Only depend on instanceId, not selectedCharacter
+
+  // Helper functions for character reactions and events
+  function characterSay(text: string) {
+    setMessages(p => [...p, {id: crypto.randomUUID(), type: 'character', timestamp: new Date(), content: text}]);
+  }
+
+  async function emitEvent(evt: any) {
+    try { 
+      await fetch('http://localhost:4000/api/events', {method: 'POST', headers: {'Content-Type': 'application/json'}, credentials: 'include', body: JSON.stringify(evt)});
+    } catch(e) {
+      console.warn('event log failed', e);
+    }
+  }
+
+  function goRogueProb(stress = selectedCharacter?.stress ?? 50, trust = selectedCharacter?.trust ?? 50, outcome: 'approved' | 'rejected' | 'error' = 'approved') {
+    const base = outcome === 'approved' ? 0.2 : 0.55; 
+    const adj = ((stress - 50) - (trust - 50)) / 400; 
+    return Math.random() < Math.min(0.9, Math.max(0.05, base + adj));
+  }
+
+  // Coach performance feedback system
+  function showCoachFeedback(type: 'success' | 'rogue' | 'rejected', trustChange: number, coachingPoints: number, isRogue: boolean = false) {
+    const emoji = type === 'success' ? '✅' : type === 'rogue' ? '⚠️' : '✅';
+    const action = isRogue ? 'Character went rogue' : type === 'success' ? 'Good advice!' : 'Good guidance - character listened!';
+    
+    // Clarify that trust is character stat, coaching points are coach stat
+    const characterTrustText = trustChange > 0 ? `Character Trust +${trustChange}` : `Character Trust ${trustChange}`;
+    const coachPointsText = coachingPoints > 0 ? `Coach Points +${coachingPoints}` : `Coach Points ${coachingPoints}`;
+    
+    const feedbackMessage = `${emoji} ${action} • ${characterTrustText} • ${coachPointsText}`;
+    
+    // Add coach feedback message (appears as centered system message)
+    setMessages(prev => [...prev, {
+      id: crypto.randomUUID(),
+      type: 'system',
+      timestamp: new Date(),
+      content: feedbackMessage
+    }]);
+    
+    console.log('🎯 [COACH FEEDBACK]', feedbackMessage);
+  }
+
+<<<<<<< HEAD
+    if (isLocalhost) {
+      // Local development or local production build
+      socketUrl = 'http://localhost:4000';
+    } else {
+      // Deployed production
+      socketUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'https://blank-wars-backend.railway.app';
+    }
+
+    console.log('🏦 [FinancialAdvisor] Connecting to backend:', socketUrl);
+
+    socketRef.current = io(socketUrl, {
+      transports: ['websocket', 'polling'],
+      timeout: 20000,
+      withCredentials: true,
+    });
+
+    socketRef.current.on('connect', () => {
+      console.log('✅ Financial chat connected to server');
+      setConnected(true);
+      setConnectionError(null);
+    });
+
+    socketRef.current.on('disconnect', () => {
+      console.log('❌ Financial chat disconnected from server');
+      setConnected(false);
+    });
+
+    socketRef.current.on('connect_error', (error) => {
+      console.error('Connection error:', error);
+      setConnectionError('Failed to connect to chat server');
+      setConnected(false);
+    });
+
+    socketRef.current.on('auth_success', () => {
+      console.log('✅ Financial chat authentication successful');
+    });
+
+    socketRef.current.on('auth_error', (error) => {
+      console.error('Authentication error:', error);
+      setConnectionError('Authentication failed. Please check your login.');
+    });
+
+    socketRef.current.on('chat_response', (data: unknown) => {
+      setIsLoading(false);
+
+      // Validate data type
+      if (!isChatResponseData(data)) {
+        console.error('Invalid chat response data:', data);
+        const errorMessage: Message = {
+          id: Date.now(),
+          type: 'system',
+          content: 'Received invalid response from server',
+          timestamp: new Date()
+        };
+        setMessages(prev => [...prev, errorMessage]);
+        return;
+      }
+
+      if (data.error) {
+        const errorMessage: Message = {
+          id: Date.now(),
+          type: 'system',
+          content: `Error: ${data.error}`,
+          timestamp: new Date()
+        };
+        setMessages(prev => [...prev, errorMessage]);
+        return;
+      }
+
+      const characterMessage: Message = {
+        id: Date.now(),
+        type: 'character',
+        content: data.message || 'I need a moment to think about that...',
+        timestamp: new Date()
+      };
+      setMessages(prev => [...prev, characterMessage]);
+
+      // Update chat feedback data (now type-safe)
+      setLastFeedback({
+        bondIncrease: data.bondIncrease || false,
+        chatResult: data.chatResult || 'neutral',
+        xpAwarded: data.xpAwarded || 0,
+        penaltyApplied: data.penaltyApplied || false,
+        characterName: selectedCharacter?.name || 'Character'
+      });
+    });
+
+    socketRef.current.on('error', (error) => {
+      console.error('Socket error:', error);
+      setIsLoading(false);
+      const errorMessage: Message = {
+        id: Date.now(),
+        type: 'system',
+        content: `Connection error: ${error.message || 'Unknown error'}`,
+        timestamp: new Date()
+      };
+      setMessages(prev => [...prev, errorMessage]);
+    });
+
+    return () => {
+      if (socketRef.current) {
+        socketRef.current.disconnect();
+        socketRef.current = null;
+      }
+    };
+  }, [selectedCharacter]);
+
+  // Generate random financial decisions for characters (frontend fallback only)
+  const generateFinancialDecision = (character: EnhancedCharacter): FinancialDecision => {
+    const wallet = character.financials?.wallet ?? 0;
+    const isBroke = wallet < 1000;
+
+    // High-end luxury car realistic range
+    const LUXURY_CAR_MIN = 200_000;
+    const LUXURY_CAR_MAX = 500_000;
+    const rnd = (min: number, max: number) => Math.floor(min + Math.random() * (max - min));
+
+    // Decisions for characters with adequate funds
+    const richDecisionTypes = [
+      {
+        description: "want to buy a luxury sports car",
+        amount: rnd(LUXURY_CAR_MIN, LUXURY_CAR_MAX),
+        options: ["Go for it", "Save up more", "Look for alternatives", "Skip it"],
+        reasoning: "I've been winning battles and deserve something nice!"
+      },
+      {
+        description: "am considering investing in cryptocurrency",
+        amount: 15_000,
+        options: ["Invest now", "Invest smaller amount", "Research more", "Avoid it"],
+        reasoning: "Everyone says crypto is the future, I don't want to miss out!"
+      },
+      {
+        description: "want to start a side business",
+        amount: 25_000,
+        options: ["Full investment", "Start small", "Find partners", "Wait longer"],
+        reasoning: "I have this great business idea that could make us rich!"
+      },
+      {
+        description: "am considering investing in better armor and weapons",
+        amount: 8_000,
+        options: ["Invest fully", "Partial investment", "Share costs", "Skip for now"],
+        reasoning: "Better training facilities means better performance in battles."
+      }
+    ];
+
+    // Decisions for broke characters — explicit debt/financing framing
+    const brokeDecisionTypes = [
+      {
+        description: "want to take out a loan for a luxury sports car",
+        amount: rnd(LUXURY_CAR_MIN, LUXURY_CAR_MAX),
+        options: ["Take the loan", "Find a co-signer", "Save first", "Forget it"],
+        reasoning: "I know I'm broke, but I could pay it back with battle winnings!"
+      },
+      {
+        description: "am thinking about borrowing money to invest",
+        amount: 10_000,
+        options: ["Borrow from bank", "Ask friends", "Use credit", "Wait and save"],
+        reasoning: "If I could just get some seed money, I could multiply it."
+      },
+      {
+        description: "want to finance basic equipment",
+        amount: 2_000,
+        options: ["Finance it", "Buy used", "Rent instead", "Go without"],
+        reasoning: "I need better gear to win battles and earn money."
+      },
+      {
+        description: "am considering a payday loan for expenses",
+        amount: 500,
+        options: ["Take the loan", "Ask for advance", "Cut expenses", "Find side work"],
+        reasoning: "Just need to make it to my next battle payout."
+      }
+    ];
+
+    const pool = isBroke ? brokeDecisionTypes : richDecisionTypes;
+    const decision = pool[Math.floor(Math.random() * pool.length)];
+
+    return {
+      id: `decision_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      characterId: character.id,
+      amount: decision.amount,
+      description: decision.description,
+      options: decision.options,
+      characterReasoning: decision.reasoning,
+      urgency: ['low', 'medium', 'high'][Math.floor(Math.random() * 3)] as 'low' | 'medium' | 'high',
+      timestamp: new Date(),
+      coachInfluenceAttempts: 0,
+      status: 'pending'
+    };
+  };
+
+  // Process character making a decision based on coach influence
+  const processCharacterDecision = async (decision: FinancialDecision, coachInput?: string) => {
+    if (!selectedCharacter) return;
+
+    const trustLevel = selectedCharacter.financials?.coachTrustLevel || 50;
+    const stressLevel = selectedCharacter.financials?.financialStress || 30;
+    const spendingPersonality = selectedCharacter.financials?.spendingPersonality || 'moderate';
+
+    // Calculate decision factors
+    let decisionScore = Math.random() * 100;
+
+    // Adjust based on coach trust
+    if (coachInput && trustLevel > 60) {
+      decisionScore += 20; // More likely to listen to good advice
+    }
+
+    // Adjust based on stress (stressed characters make worse decisions)
+    if (stressLevel > 70) {
+      decisionScore -= 25;
+    }
+
+    // Adjust based on personality
+    if (spendingPersonality === 'impulsive') {
+      decisionScore -= 15;
+    } else if (spendingPersonality === 'conservative') {
+      decisionScore += 15;
+    }
+
+    // Decision is handled by the WebSocket response
+    // Clear the pending decision after processing
+    setPendingDecision(null);
+
+    return { decisionScore };
+  };
+
+  const handleSendMessage = async () => {
+    if (!inputMessage.trim() || !selectedCharacter || !connected) return;
+    if (isSendingRef.current) return; // drop duplicates
+    
+    isSendingRef.current = true;
+
+    const userMessage: Message = {
+      id: crypto.randomUUID(),
+      type: 'player',
+      content: inputMessage.trim(),
+      timestamp: new Date()
+    };
+
+    setMessages(prev => {
+      const merged = [...prev, userMessage];
+      const seen = new Set<string>();
+      return merged.filter(m => {
+        const k = String(m.messageId ?? m.id ?? `${m.timestamp}-${m.type}`);
+        if (seen.has(k)) return false;
+        seen.add(k);
+        return true;
+      });
+    });
+    setInputMessage('');
+    setIsLoading(true);
+
+    try {
+      // Get context services like other working chats
+      const eventContextService = EventContextService.getInstance();
+      const conflictService = ConflictContextService.getInstance();
+
+      console.log('🆔 Financial chat using character ID:', canonicalCharacterId, 'for character:', characterForChat.name);
+
+      // Try to get living context with graceful error handling
+      let livingContext = null;
+      try {
+        livingContext = await conflictService.generateLivingContext(characterForChat.id);
+        console.log('✅ Living context loaded for financial chat:', livingContext);
+      } catch (error) {
+        console.warn('⚠️ Could not generate living context for financial chat:', error);
+        livingContext = `Living in team quarters with other legendary figures. Current living situation affects financial decisions and stress levels.`;
+      }
+
+      // Generate event context for financial domain
+      let eventContext = null;
+      try {
+        const contextString = await eventContextService.getPerformanceContext(canonicalCharacterId);
+        if (contextString) {
+          eventContext = {
+            recentEvents: contextString,
+            relationships: '',
+            emotionalState: pendingDecision ? 'considering_financial_decision' : 'open_to_advice',
+            domainSpecific: 'financial_coaching'
+          };
+        }
+      } catch (error) {
+        console.warn('⚠️ Could not generate event context for financial chat:', error);
+      }
+
+      // Build financial coaching context inline like other working chats
+      const financialPrompt = `You are ${characterForChat.name}, a legendary figure, participating in a financial coaching session with your team's financial advisor.
+
+SESSION TYPE: Financial Advisory and Decision Support
+
+FINANCIAL COACHING CONTEXT:
+- Current wallet: $${characterForChat.financials.wallet.toLocaleString()}
+- Monthly earnings: $${characterForChat.financials.monthlyEarnings.toLocaleString()}
+- Financial stress level: ${characterForChat.financials.financialStress}%
+- Trust in coach: ${characterForChat.financials.coachTrustLevel}%
+- Spending personality: ${characterForChat.financials.spendingPersonality}
+- Recent decisions: ${characterForChat.financials.recentDecisions.length} previous financial choices
+${pendingDecision ? `- Pending Decision: ${pendingDecision.description} for $${pendingDecision.amount.toLocaleString()}` : ''}
+
+CHARACTER FINANCIAL PSYCHOLOGY:
+- You are a legendary figure from your era, so modern financial concepts might be foreign or fascinating
+- React to financial advice based on your background and personality
+- Your trust level (${characterForChat.financials.coachTrustLevel}%) affects how you receive coaching
+- Your financial stress (${characterForChat.financials.financialStress}%) influences your decision-making
+- Your spending personality (${characterForChat.financials.spendingPersonality}) shapes your money attitudes
+
+FINANCIAL COACHING SESSION GUIDELINES:
+- This is specialized financial counseling focused on money decisions and financial wellness
+- Respond authentically as ${characterForChat.name} would to financial guidance
+- Show your character's relationship with money based on your era and personality
+- If stressed about finances, show that emotional state
+- Consider the coach's advice through the lens of your character background
+- Financial topics include: budgeting, spending decisions, investments, financial goals, money stress
+- Respond with dialogue only, no stage directions or scene descriptions
+- Keep responses conversational and direct
+
+${pendingDecision ? `CURRENT FINANCIAL DECISION:
+You are considering: ${pendingDecision.description} for $${pendingDecision.amount.toLocaleString()}
+Your reasoning: "${pendingDecision.characterReasoning}"
+Options: ${pendingDecision.options.join(', ')}
+Urgency: ${pendingDecision.urgency}` : ''}
+
+Respond as ${characterForChat.name} would in a real financial coaching session, showing authentic reactions to money advice while maintaining your character voice and background.`;
+
+      // Message sending using universal chat library
+      const enriched = await enrichCharacter(characterForChat);
+      const agentKey = mustResolveAgentKey(characterForChat?.name, canonicalCharacterId, 'financial');
+      const promptWithTag = ensureBrevityTag(financialPrompt, BREVITY_TAGS.finance);
+
+      logAgentKey('finance-message', { characterId: canonicalCharacterId, agentKey, name: enriched.name });
+
+      console.log('[finance-message] payload preview', {
+        kind: 'chat',
+        userText: userMessage.content?.slice(0, 120),
+        system: promptWithTag?.slice(0, 160),
+      });
+
+      const { text: rawText = '' } = await singleFlight(
+        chatFlightKey('finance', sessionId || 'default', agentKey),
+        () => sendChat(sessionId ?? instanceId, {
+          agentKey,
+          message: userMessage.content, // <-- Use actual user message, not system prompt
+          chatType: 'financial_advisor',
+          topic,
+          characterId: canonicalCharacterId,          // <-- canonical for DB/agent
+          conversationContext: promptWithTag, // <-- System prompt goes here
+          meta: {
+            userMessage: userMessage.content,                // <-- important
+            usercharId: instanceId,                   // <-- instance for UI/session
+            characterIdCanonical: canonicalCharacterId,
+            financials: characterForChat.financials,
+            domain: 'financial',
+            domainSpecific: 'financial',
+            // Removed walletCents - backend now queries wallet directly from database
+            monthlyIncome: 0,  // TODO: Add real income data when available
+            employed: false,        // TODO: Add real employment data when available
+          },
+          characterData: {
+          name: characterForChat.name,
+          archetype: characterForChat.archetype,
+          level: characterForChat.level,
+          personality: characterForChat.personality || {
+            traits: ['Money-conscious'],
+            speechStyle: 'Direct',
+            motivations: ['Financial security'],
+            fears: ['Poverty'],
+            relationships: []
+          },
+          // Add living context for conflict awareness
+          livingContext: livingContext,
+          // Add centralized event context
+          eventContext: eventContext,
+          // Character stats
+          baseStats: characterForChat.baseStats,
+          combatStats: characterForChat.combatStats,
+          // Current status
+          currentHp: characterForChat.combatStats?.health || 100,
+          maxHp: characterForChat.combatStats?.maxHealth || 100,
+          injuries: characterForChat.injuries,
+          bondLevel: characterForChat.bondLevel || characterForChat.displayBondLevel || 0,
+          // Financial-specific context
+          financialStats: {
+            wallet: characterForChat.financials.wallet,
+            monthlyEarnings: characterForChat.financials.monthlyEarnings,
+            financialStress: characterForChat.financials.financialStress,
+            coachTrustLevel: characterForChat.financials.coachTrustLevel,
+            spendingPersonality: characterForChat.financials.spendingPersonality,
+            recentDecisions: characterForChat.financials.recentDecisions
+          },
+          // Pending decision context
+          pendingFinancialDecision: pendingDecision,
+          // Add comprehensive financial coaching conversation context like CoachingSessionChat
+          conversationContext: `${financialPrompt}`,
+
+          // Domain-specific coaching context enhanced with proper templates
+          sessionContext: {
+            type: 'financial_advisory',
+            hasDecision: !!pendingDecision,
+            focusAreas: ['Financial planning', 'Money decisions', 'Spending habits', 'Financial stress', 'Investment choices', 'Budgeting'],
+            coachingApproach: 'Character-specific financial guidance with era-appropriate perspectives'
+          }
+        },
+        previousMessages: messages.slice(-5).map(msg => ({
+          role: msg.type === 'player' ? 'user' : 'assistant',
+          content: msg.content
+        }))
+        })
+      );
+
+      const text = twoSentenceCap(extractAssistantText(rawText));
+      logResponse('finance-message', { rawLength: rawText.length, cappedLength: text.length });
+
+      setMessages(prev => [...prev, { 
+        id: crypto.randomUUID(), 
+        type: 'character', 
+        content: text || 'I need a moment to think about that...', 
+        timestamp: new Date() 
+      }]);
+
+      // Note: Don't automatically process decisions here - let the coach use the preset buttons
+      // The processCharacterDecision function will be called from handlePresetDecision instead
+
+      // Decision generation is now only done once per character selection in the initial greeting
+    } catch (error) {
+      console.error('Error in financial chat:', error);
+      const errorMessage: Message = {
+        id: crypto.randomUUID(),
+        type: 'system',
+        content: `Chat error: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        timestamp: new Date()
+      };
+      setMessages(prev => [...prev, errorMessage]);
+    } finally {
+      isSendingRef.current = false;
+      setIsLoading(false);
+    }
+  };
+
+
+  const getCharacterContext = (character: EnhancedCharacter) => {
+    return {
+      financialStatus: {
+        wallet: character.financials?.wallet, // NO FALLBACK - must come from DB
+        stress: character.financials?.financialStress || 30,
+        trust: character.financials?.coachTrustLevel || 50,
+        spendingStyle: character.financials?.spendingPersonality || 'moderate'
+      },
+      recentDecisions: character.financials?.recentDecisions || [],
+      monthlyEarnings: character.financials?.monthlyEarnings // NO FALLBACK - must come from DB
+    };
+  };
+
+  const shouldAutomate = (decision: FinancialDecision, character: EnhancedCharacter): 'bad' | 'good' | null => {
+    // NO FALLBACKS - wallet must be a number from DB
+  if (typeof character.financials?.wallet !== 'number') {
+    throw new Error(`wallet must be a number for ${character.name || character.id}`);
+  }
+  const wallet = character.financials.wallet;
+    const stress = character.financials?.financialStress || 30;
+    const trust = character.financials?.coachTrustLevel || 50;
+    // NO FALLBACK - monthlyEarnings must be number from DB
+    if (typeof character.financials?.monthlyEarnings !== 'number') {
+      throw new Error(`monthlyEarnings must be a number for ${character.name || character.id}`);
+    }
+    const monthlyEarnings = character.financials.monthlyEarnings;
+
+    // Calculate decision amount as percentage of available funds
+    const percentOfWallet = (decision.amount / wallet) * 100;
+    const percentOfMonthlyEarnings = (decision.amount / monthlyEarnings) * 100;
+
+    // EXTREMELY RESTRICTIVE automated decisions - almost never automate
+    // The coaching interaction is the core gameplay experience
+
+    // Only automate VERY obvious tiny purchases
+    if (percentOfWallet < 2 && percentOfMonthlyEarnings < 10 && decision.amount < 500) return 'good'; // Tiny purchases like coffee
+
+    // Only automate completely impossible purchases (10x wallet amount)
+    if (decision.amount > wallet * 10) return 'bad'; // Impossible purchases like $200k car with $19k wallet
+
+    // Everything else goes to manual coaching - this is the core gameplay
+    // Even "can't afford" decisions should be shown to coach for educational value
+    return null;
+  };
+
+  const processDecisionOutcome = async (decision: FinancialDecision, coachDecision: 'rejected' | 'approved' | 'character_choice', trustLevel: number, stressLevel: number) => {
+    if (!selectedCharacter) return null;
+
+    const characterFinancials = selectedCharacter.financials || {
+      wallet: 19073,
+      financialStress: stressLevel,
+      coachTrustLevel: trustLevel,
+      spendingPersonality: 'moderate',
+      recentDecisions: [],
+      monthlyEarnings: 6055
+    };
+
+    let outcome: any;
+
+    if (coachDecision === 'rejected') {
+      // Coach rejected - determine if character listens
+      const listenChance = Math.min(trustLevel * 0.8, 80); // Max 80% chance to listen
+      const characterListens = Math.random() * 100 < listenChance;
+
+      if (characterListens) {
+        outcome = {
+          result: 'decision_avoided',
+          financialImpact: 0,
+          stressChange: -5, // Slightly less stress from avoiding bad decision
+          trustChange: 5, // Trust increases when coach saves them
+          message: `You convinced me to reconsider. I'll hold off on this decision for now.`
+        };
+      } else {
+        // Character ignores advice - use AI judge for outcome
+        const judgeContext: FinancialEventContext = {
+          characterId: selectedCharacter.id,
+          eventType: 'decision',
+          financialImpact: decision.amount,
+          stressLevel: stressLevel,
+          coachInvolvement: true,
+          battleContext: undefined
+        };
+
+        const judgeRuling = makeFinancialJudgeDecision(judgeContext, {
+          id: decision.id,
+          characterId: decision.characterId,
+          amount: decision.amount,
+          decision: 'other',
+          outcome: 'pending',
+          followedAdvice: false,
+          timestamp: decision.timestamp,
+          description: decision.description,
+          financialImpact: 0,
+          stressImpact: 0,
+          relationshipImpact: 0
+        } as CharacterFinancialDecision, undefined);
+
+        outcome = {
+          result: 'ignored_advice',
+          financialImpact: -Math.floor(decision.amount * 0.3), // 30% loss for ignoring advice
+          stressChange: 20, // High stress from bad decision
+          trustChange: -10, // Trust decreases when they ignore advice
+          message: `I appreciate your concern, but I'm going to do this anyway. ${judgeRuling.commentary}`
+        };
+      }
+    } else if (coachDecision === 'approved') {
+      // Coach approved - simulate positive outcome
+      const successChance = Math.max(70 - stressLevel * 0.3, 30); // Stress reduces success chance
+      const isSuccessful = Math.random() * 100 < successChance;
+
+      if (isSuccessful) {
+        outcome = {
+          result: 'successful_decision',
+          financialImpact: Math.floor(decision.amount * 0.1), // 10% return on investment
+          stressChange: -10, // Stress decreases with success
+          trustChange: 8, // Trust increases with good advice
+          message: `Thanks for the support! This turned out to be a great decision.`
+        };
+      } else {
+        outcome = {
+          result: 'failed_decision',
+          financialImpact: -Math.floor(decision.amount * 0.2), // 20% loss
+          stressChange: 15, // Stress increases with failure
+          trustChange: -5, // Trust decreases slightly
+          message: `Even with your support, this didn't work out as expected. I'm frustrated.`
+        };
+      }
+    } else {
+      // Character's choice - let AI judge decide outcome
+      const judgeContext: FinancialEventContext = {
+        characterId: selectedCharacter.id,
+        eventType: 'decision',
+        financialImpact: decision.amount,
+        stressLevel: stressLevel,
+        coachInvolvement: true,
+        battleContext: undefined
+      };
+
+      const judgeRuling = makeFinancialJudgeDecision(judgeContext, {
+        id: decision.id,
+        characterId: decision.characterId,
+        amount: decision.amount,
+        decision: 'other',
+        outcome: 'pending',
+        followedAdvice: false,
+        timestamp: decision.timestamp,
+        description: decision.description,
+        financialImpact: 0,
+        stressImpact: 0,
+        relationshipImpact: 0
+      } as CharacterFinancialDecision, undefined);
+
+      // Simulate outcome based on AI judge's risk assessment
+      let financialMultiplier = 0;
+      let stressMultiplier = 0;
+      let trustMultiplier = 0;
+
+      switch (judgeRuling.riskAssessment) {
+        case 'excellent':
+          financialMultiplier = 0.15; // 15% gain
+          stressMultiplier = -15; // Stress decreases
+          trustMultiplier = 2; // Small trust increase
+          break;
+        case 'good':
+          financialMultiplier = 0.05; // 5% gain
+          stressMultiplier = -5; // Slight stress decrease
+          trustMultiplier = 1; // Minimal trust increase
+          break;
+        case 'questionable':
+          financialMultiplier = -0.05; // 5% loss
+          stressMultiplier = 10; // Stress increases
+          trustMultiplier = 0; // No trust change
+          break;
+        case 'poor':
+          financialMultiplier = -0.25; // 25% loss
+          stressMultiplier = 20; // High stress
+          trustMultiplier = -3; // Trust decreases
+          break;
+        case 'catastrophic':
+          financialMultiplier = -0.5; // 50% loss
+          stressMultiplier = 30; // Very high stress
+          trustMultiplier = -5; // Significant trust decrease
+          break;
+      }
+
+      outcome = {
+        result: 'independent_choice',
+        financialImpact: Math.floor(decision.amount * financialMultiplier),
+        stressChange: stressMultiplier,
+        trustChange: trustMultiplier,
+        message: `I made my own call on this one. ${judgeRuling.commentary}`
+      };
+    }
+
+    // Helper function to update local state
+    const updateLocalFinancialState = () => {
+      if (selectedCharacter.financials) {
+        selectedCharacter.financials.wallet += outcome.financialImpact;
+        selectedCharacter.financials.financialStress = Math.max(0, Math.min(100, selectedCharacter.financials.financialStress + outcome.stressChange));
+        selectedCharacter.financials.coachTrustLevel = Math.max(0, Math.min(100, selectedCharacter.financials.coachTrustLevel + outcome.trustChange));
+        selectedCharacter.financials.recentDecisions.push({
+          decision: decision.description,
+          amount: decision.amount,
+          coachDecision,
+          outcome: outcome.result,
+          timestamp: new Date()
+        });
+      }
+    };
+
+    // Silent local fallback; memory save already handled via persist hint
+    try {
+      // temporarily disabled — memory save is handled via /ai/chat persist
+      // await saveDecision(selectedCharacter.id, { wallet: ..., financialStress: ..., coachTrustLevel: ... });
+      // await saveDecision(selectedCharacter.id, { decision: ..., amount: ..., coachDecision, outcome: ..., timestamp: ... });
+      if (process.env.NODE_ENV === 'development') {
+        console.log('Financial decision handled via memory persist system');
+      }
+    } catch (error) {
+      // Silent handling - no banner
+      if (process.env.NODE_ENV === 'development') {
+        console.log('Decision save handled via memory system');
+      }
+    }
+
+    // Always update local state for immediate UI feedback
+    updateLocalFinancialState();
+
+    return outcome;
+  };
+
+  // Helper function to determine if character will override coach based on their personality
+  const willCharacterOverride = (character: EnhancedCharacter): boolean => {
+    // Calculate real-time adherence using the same logic as gameplanAdherenceService
+    const baseAdherence = character.gameplan_adherence_level ?? 75;
+    
+    // Get psychological state impacts
+    const stressImpact = -(character.stress_level * 0.3);
+    const mentalHealthImpact = (character.current_mental_health - 50) * 0.2;
+    const teamTrustImpact = (character.team_trust - 50) * 0.1;
+    const battleFocusImpact = (character.battle_focus - 50) * 0.15;
+    
+    // Calculate final adherence (mirrors gameplanAdherenceService.ts:57-59)
+    const finalAdherence = Math.max(0, Math.min(100, 
+      baseAdherence + stressImpact + mentalHealthImpact + teamTrustImpact + battleFocusImpact
+    ));
+    
+    // Convert adherence to override chance (inverse relationship)
+    let overrideChance = 0.1; // Default 10%
+    
+    if (finalAdherence < 30) {
+      overrideChance = 0.7; // Critical adherence - 70% override chance
+    } else if (finalAdherence < 50) {
+      overrideChance = 0.5; // High risk - 50% override chance
+    } else if (finalAdherence < 70) {
+      overrideChance = 0.3; // Medium risk - 30% override chance
+    }
+    
+    return Math.random() < overrideChance;
+  };
+
+  // Helper function to commit financial decisions via REST API
+  const commitFinancialDecision = async (decision: FinancialDecision): Promise<{success: boolean, error?: string, financials?: any}> => {
+    if (!selectedCharacter) return { success: false, error: 'No character selected' };
+    
+    // DOLLARS ONLY - no cents
+    const priceInDollars = decision.amount ?? 0;
+    // DOLLARS ONLY - no cents conversions
+    const walletDollars = selectedCharacter.financials?.wallet;
+    const paymentMethod: 'cash' | 'debt' = walletDollars >= (decision.amount ?? 0) ? 'cash' : 'debt';
+    
+    try {
+      const url = `http://localhost:4000/api/characters/${selectedCharacter.id}/decisions/commit`;
+      const payload = {
+        amount: priceInDollars, // DOLLARS ONLY
+        payment_method: paymentMethod,
+        apr_bps: 1299,
+        term_months: 24,
+        description: decision.description,
+        client_decision_id: decision.id ?? null,
+      };
+      
+      console.log('💰 Committing financial decision:', { url, payload });
+      
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({}));
+        return { success: false, error: error.error || 'Request failed' };
+      }
+
+      // Handle 204 No Content response (success with no body)
+      if (response.status === 204) {
+        return { success: true };
+      }
+
+      const data = await response.json();
+      return { success: true, financials: data.financials };
+    } catch (err) {
+      return { success: false, error: 'Network error' };
+    }
+  };
+
+  const handlePresetDecision = async (decisionType: 'bad' | 'good' | 'character_choice') => {
+    if (!pendingDecision || !selectedCharacter || isCommittingDecision) return;
+    
+    console.log('[APPROVE] start', { id: pendingDecision?.id, amount: pendingDecision?.amount, type: decisionType });
+    reactionHandledRef.current = false;
+    
+    // Set in-flight guard for financial transactions
+    if (decisionType === 'good' || decisionType === 'character_choice') {
+      setIsCommittingDecision(true);
+    }
+
+    // Track coach recommendation for scoring (only for explicit approve/reject)
+    if (decisionType === 'good') {
+      setLastCoachRecommendation('approve');
+    } else if (decisionType === 'bad') {
+      setLastCoachRecommendation('reject');
+    }
+    // character_choice doesn't set a coach recommendation
+
+    const trustLevel = selectedCharacter.financials?.coachTrustLevel || 50;
+    const stressLevel = selectedCharacter.financials?.financialStress || 30;
+
+    let outcome: any;
+    let coachMessage: string;
+
+    if (decisionType === 'bad') {
+      // Coach rejects the decision - use new immediate reaction system
+      coachMessage = `I strongly advise against this decision. The risks outweigh the benefits, and given your current financial situation, this could lead to significant problems. Let's explore better alternatives.`;
+      
+      // Send persist hint for rejected decision  
+      const priceCents = Math.round((pendingDecision.amount ?? 0) * 100);
+      const payment_method: 'cash' | 'debt' = 'debt'; // Backend will determine actual payment method
+      
+      const financing = {
+        recommended: true,
+        type: 'loan',
+        apr_bps: 1299,
+        term_months: 24,
+        est_monthly_cents: Math.round(
+          priceCents * (0.1299/12) / (1 - Math.pow(1 + (0.1299/12), -24))
+        )
+      };
+      
+      // Determine character action and coach alignment
+      const character_action = 'reject'; // Character followed coach's reject recommendation
+      const followed_coach = lastCoachRecommendation === 'reject';
+      const coach_reward_points = followed_coach ? +1 : (lastCoachRecommendation ? -1 : 0);
+      
+      // No wallet changes for rejected decisions
+      const wallet_delta_cents = 0;
+      const debt_principal_delta_cents = 0;
+      
+      // Add coach rejection message 
+      const coachRejectionMessage: Message = {
+        id: crypto.randomUUID(),
+        type: 'player',
+        timestamp: new Date(),
+        content: coachMessage
+      };
+      setMessages(prev => [...prev, coachRejectionMessage]);
+
+      // Character reaction + event logging for rejection
+      const rogue = goRogueProb(undefined, undefined, 'rejected');
+      console.log('[APPROVE] reaction', { branch: 'rejected', rogue });
+      if (rogue) {
+        characterSay(`I can't wait around—doing it anyway.`);
+        const evt = {
+          type: 'fin_decision.rogue',
+          characterIds: [String(selectedCharacter.id)],
+          description: `Character went rogue after coach rejection: ${pendingDecision.description} ($${pendingDecision.amount?.toLocaleString()})`,
+          severity: 'high',
+          metadata: {
+            decisionId: pendingDecision.id,
+            amount: pendingDecision.amount,
+            effects: { trust: -10, stress: +8 },
+            callbackAt: new Date(Date.now() + 2 * 3600e3).toISOString()
+          },
+          emotionalWeight: 85,
+          conflictPotential: 90
+        };
+        console.log('[APPROVE] events payload', evt);
+        await emitEvent(evt);
+        
+        // Show coach feedback for rogue after rejection
+        showCoachFeedback('rogue', -10, -3, true);
+      } else {
+        characterSay(`Understood. I'll hold off and explore safer options.`);
+        const evt = {
+          type: 'fin_decision.rejected',
+          characterIds: [String(selectedCharacter.id)],
+          description: `Character accepted coach rejection: ${pendingDecision.description} ($${pendingDecision.amount?.toLocaleString()})`,
+          severity: 'low',
+          metadata: {
+            decisionId: pendingDecision.id,
+            amount: pendingDecision.amount,
+            effects: { trust: +2, stress: -2 }
+          },
+          emotionalWeight: 15,
+          conflictPotential: 5
+        };
+        console.log('[APPROVE] events payload', evt);
+        await emitEvent(evt);
+        
+        // Show coach feedback for successful rejection advice
+        showCoachFeedback('rejected', 2, 1, false);
+      }
+      reactionHandledRef.current = true;
+      
+      // Removed sendChat call to prevent AI system recursion
+      // Old meta data for reference:
+      // meta: {
+      //   usercharId: instanceId,
+      //   domain: 'financial',
+      //   domainSpecific: 'financial',
+      //   monthlyIncomeCents: 0,  // TODO: Add real income data when available
+      //   employed: false,        // TODO: Add real employment data when available
+      //   persist: { kind: 'financial.decision', ... }
+      // });
+    } else if (decisionType === 'good') {
+      // Coach approves the decision - use REST API with affordability checks
+      try {
+        const result = await commitFinancialDecision(pendingDecision);
+        
+        if (!result.success) {
+          // Handle unaffordable loans and other errors
+          let errorMessage = 'Could not approve this decision.';
+          if (result.error === 'unaffordable') {
+            errorMessage = 'This loan was denied - the monthly payment would exceed your affordable debt limit.';
+          } else if (result.error === 'insufficient_funds') {
+            errorMessage = 'Not enough cash for this purchase.';
+          }
+          
+          // Show error message without committing
+          outcome = await processDecisionOutcome(pendingDecision, 'rejected', trustLevel, stressLevel);
+          coachMessage = `${errorMessage} Let's look for alternatives that better fit your financial situation.`;
+          
+          // Add coach rejection message (left side)
+          const coachRejectionMessage: Message = {
+            id: crypto.randomUUID(),
+            type: 'player',
+            content: coachMessage,
+            timestamp: new Date()
+          };
+          setMessages(prev => [...prev, coachRejectionMessage]);
+
+          // Character reaction + event logging for rejection
+          const rogue = goRogueProb(undefined, undefined, 'rejected');
+          console.log('[APPROVE] reaction', { branch: 'rejected', rogue });
+          if (rogue) {
+            characterSay(`I can't wait around—doing it anyway.`);
+            const evt = {
+              type: 'fin_decision.rogue',
+              characterIds: [String(selectedCharacter.id)],
+              description: `Character went rogue after coach rejection: ${pendingDecision.description} ($${pendingDecision.amount?.toLocaleString()})`,
+              severity: 'high',
+              metadata: {
+                decisionId: pendingDecision.id,
+                amount: pendingDecision.amount,
+                effects: { trust: -10, stress: +8 },
+                callbackAt: new Date(Date.now() + 2 * 3600e3).toISOString()
+              },
+              emotionalWeight: 85,
+              conflictPotential: 90
+            };
+            console.log('[APPROVE] events payload', evt);
+            await emitEvent(evt);
+            
+            // Show coach feedback for rogue after rejection
+            showCoachFeedback('rogue', -10, -3, true);
+          } else {
+            characterSay(`Understood. I'll hold off and explore safer options.`);
+            const evt = {
+              type: 'fin_decision.rejected',
+              characterIds: [String(selectedCharacter.id)],
+              description: `Character accepted coach rejection: ${pendingDecision.description} ($${pendingDecision.amount?.toLocaleString()})`,
+              severity: 'low',
+              metadata: {
+                decisionId: pendingDecision.id,
+                amount: pendingDecision.amount,
+                effects: { trust: +2, stress: -2 }
+              },
+              emotionalWeight: 15,
+              conflictPotential: 5
+            };
+            console.log('[APPROVE] events payload', evt);
+            await emitEvent(evt);
+            
+            // Show coach feedback for successful rejection advice
+            showCoachFeedback('rejected', 2, 1, false);
+          }
+          reactionHandledRef.current = true;
+          
+          // Give character a chance to override based on their gameplan adherence
+          if (reactionHandledRef.current) {
+            return; // we already reacted—skip legacy override
+          }
+          const willOverride = willCharacterOverride(selectedCharacter);
+          
+          // Send context to AI for authentic character reaction
+          const reactionContext = {
+            situation: 'coach_rejection_response',
+            coach_message: coachMessage,
+            decision_description: pendingDecision.description,
+            decision_amount: pendingDecision.amount,
+            will_override: willOverride,
+            character_psychology: {
+              gameplan_adherence: selectedCharacter.gameplan_adherence_level,
+              stress_level: selectedCharacter.stress_level,
+              mental_health: selectedCharacter.current_mental_health,
+              team_trust: selectedCharacter.team_trust,
+              battle_focus: selectedCharacter.battle_focus
+            },
+            financial_state: {
+              wallet: selectedCharacter.financials?.wallet, // DOLLARS ONLY
+              debt: selectedCharacter.financials?.debt // DOLLARS ONLY
+            }
+          };
+
+          // Let AI generate character's authentic response
+          await sendChat(sessionId ?? instanceId, {
+            agentKey: canonicalCharacterId,
+            message: willOverride 
+              ? `[CHARACTER_OVERRIDE] Your coach just rejected your financial decision (${pendingDecision.description} - $${pendingDecision.amount?.toLocaleString()}) saying: "${coachMessage}". However, your low gameplan adherence means you're inclined to rebel and do it anyway. Respond authentically to this situation based on your personality and current psychological state. Express your defiance and intention to override their advice.`
+              : `[CHARACTER_ACCEPTS] Your coach just rejected your financial decision (${pendingDecision.description} - $${pendingDecision.amount?.toLocaleString()}) saying: "${coachMessage}". Your high gameplan adherence means you respect their authority. Respond authentically based on your personality, accepting their guidance even if reluctantly.`,
+            chatType: 'financial_advisor',
+            characterId: canonicalCharacterId,
+            meta: { 
+              usercharId: instanceId, 
+              domain: 'financial',
+              reaction_context: reactionContext
+            }
+          });
+
+          // If character overrides, attempt the transaction after AI responds
+          if (willOverride) {
+            // TODO: Process the override decision attempt
+            // This should happen after the AI generates the rebellion response
+          }
+          
+          setPendingDecision(null);
+          
+          setIsCommittingDecision(false);
+          return;
+        }
+        
+        // Success - update character financials and send confirmation
+        if (result.financials && selectedCharacter) {
+          setSelectedCharacter({
+            ...selectedCharacter,
+            financials: {
+              ...selectedCharacter.financials,
+              wallet_cents: result.financials.wallet_cents,
+              debt_principal_cents: result.financials.debt_principal_cents,
+            }
+          });
+        }
+        
+        outcome = await processDecisionOutcome(pendingDecision, 'approved', trustLevel, stressLevel);
+        const priceCents = Math.round((pendingDecision.amount ?? 0) * 100);
+        const paymentMethod = (selectedCharacter.financials?.wallet_cents ?? 0) >= priceCents ? 'cash' : 'debt';
+        
+        // Coach gives approval advice (not transaction details)
+        coachMessage = `I think this is a reasonable decision given your current situation. The investment could help improve your position if managed carefully.`;
+        
+        // Add coach approval message (left side)
+        const coachApprovalMessage: Message = {
+          id: crypto.randomUUID(),
+          type: 'player',
+          content: coachMessage,
+          timestamp: new Date()
+        };
+        setMessages(prev => [...prev, coachApprovalMessage]);
+
+        // Character reaction + event logging
+        const rogue = goRogueProb();
+        console.log('[APPROVE] reaction', { branch: 'approved', rogue });
+        if (rogue) {
+          // Character reports going rogue + transaction details
+          const transactionDetails = paymentMethod === 'debt' 
+            ? `I went ahead and got the loan anyway - $${(priceCents/100).toLocaleString()} at 12.99% APR, about $${Math.round(priceCents * (0.1299/12) / (1 - Math.pow(1 + (0.1299/12), -24))/100).toFixed(0)} per month for 24 months.`
+            : `I went ahead and bought it with cash for $${(priceCents/100).toLocaleString()}.`;
+          characterSay(`Thanks for the advice, coach… but I'm going my own way. ${transactionDetails}`);
+          const evt = {
+            type: 'fin_decision.rogue',
+            characterIds: [String(selectedCharacter.id)],
+            description: `Character went rogue on financial decision: ${pendingDecision.description} ($${pendingDecision.amount?.toLocaleString()})`,
+            severity: 'high',
+            metadata: {
+              decisionId: pendingDecision.id,
+              amount: pendingDecision.amount,
+              effects: { trust: -8, stress: +6 },
+              callbackAt: new Date(Date.now() + 3600e3).toISOString(),
+              paymentMethod
+            },
+            emotionalWeight: 75,
+            conflictPotential: 80
+          };
+          console.log('[APPROVE] events payload', evt);
+          await emitEvent(evt);
+          
+          // Show coach feedback for rogue behavior
+          showCoachFeedback('rogue', -8, -2, true);
+        } else {
+          // Character reports following advice + transaction details
+          const transactionDetails = paymentMethod === 'debt' 
+            ? `I went ahead and secured the financing - $${(priceCents/100).toLocaleString()} at 12.99% APR, about $${Math.round(priceCents * (0.1299/12) / (1 - Math.pow(1 + (0.1299/12), -24))/100).toFixed(0)} per month for 24 months.`
+            : `I made the purchase with cash - $${(priceCents/100).toLocaleString()} from my wallet.`;
+          characterSay(`Got it, coach. I'll follow your recommendation. ${transactionDetails}`);
+          const evt = {
+            type: 'fin_decision.accepted',
+            characterIds: [String(selectedCharacter.id)],
+            description: `Character accepted coach advice on financial decision: ${pendingDecision.description} ($${pendingDecision.amount?.toLocaleString()})`,
+            severity: 'low',
+            metadata: {
+              decisionId: pendingDecision.id,
+              amount: pendingDecision.amount,
+              effects: { trust: +6, stress: -4 },
+              paymentMethod
+            },
+            emotionalWeight: 25,
+            conflictPotential: 10
+          };
+          console.log('[APPROVE] events payload', evt);
+          await emitEvent(evt);
+          
+          // Show coach feedback for successful advice
+          showCoachFeedback('success', 6, 3, false);
+        }
+        reactionHandledRef.current = true;
+        
+        // Reset generation flag after decision is processed (allow future decisions)
+        setTimeout(() => {
+          generatedForCharRef.current = null;
+        }, 30000); // Allow new decisions after 30 seconds
+
+        // Give character a chance to respond to coach's approval
+        if (reactionHandledRef.current) {
+          return; // we already reacted—skip legacy override
+        }
+        const willOverride = willCharacterOverride(selectedCharacter);
+        
+        // Send context to AI for authentic character reaction to approval
+        const approvalReactionContext = {
+          situation: 'coach_approval_response',
+          coach_message: coachMessage,
+          decision_description: pendingDecision.description,
+          decision_amount: pendingDecision.amount,
+          transaction_completed: true,
+          will_have_second_thoughts: willOverride,
+          character_psychology: {
+            gameplan_adherence: selectedCharacter.gameplan_adherence_level,
+            stress_level: selectedCharacter.stress_level,
+            mental_health: selectedCharacter.current_mental_health,
+            team_trust: selectedCharacter.team_trust,
+            battle_focus: selectedCharacter.battle_focus
+          }
+        };
+
+        // Let AI generate character's authentic response to coach approval
+        await sendChat(sessionId ?? instanceId, {
+          agentKey: canonicalCharacterId,
+          message: willOverride 
+            ? `[CHARACTER_SECOND_THOUGHTS] Your coach just approved and processed your financial decision (${pendingDecision.description} - $${pendingDecision.amount?.toLocaleString()}) saying: "${coachMessage}". The transaction is complete. However, your psychological state makes you have second thoughts now that it's done. Respond authentically - maybe you're having buyer's remorse, anxiety, or questioning the decision despite the coach's support.`
+            : `[CHARACTER_GRATEFUL] Your coach just approved and processed your financial decision (${pendingDecision.description} - $${pendingDecision.amount?.toLocaleString()}) saying: "${coachMessage}". The transaction is complete and you feel good about following their guidance. Respond authentically based on your personality, expressing appreciation for their support and confidence in the decision.`,
+          chatType: 'financial_advisor',
+          characterId: canonicalCharacterId,
+          meta: { 
+            usercharId: instanceId, 
+            domain: 'financial',
+            reaction_context: approvalReactionContext
+          }
+        });
+        
+      } catch (error) {
+        console.error('Error committing financial decision:', error);
+        outcome = await processDecisionOutcome(pendingDecision, 'rejected', trustLevel, stressLevel);
+        coachMessage = 'There was an error processing this decision. Please try again.';
+        
+        // Add error message directly to chat (avoid triggering AI system)
+        const errorMessage: Message = {
+          id: crypto.randomUUID(),
+          type: 'player',
+          content: coachMessage,
+          timestamp: new Date()
+        };
+        setMessages(prev => [...prev, errorMessage]);
+      } finally {
+        setIsCommittingDecision(false);
+      }
+    } else {
+      // Character's choice - use REST API with affordability checks
+      try {
+        const result = await commitFinancialDecision(pendingDecision);
+        
+        if (!result.success) {
+          // Handle unaffordable loans and other errors
+          console.log('🚨 LOAN REJECTED - Error handling triggered:', result.error);
+          
+          // 1. Character announces their decision (LEFT side)
+          const characterDecision: Message = {
+            id: crypto.randomUUID(),
+            type: 'character',
+            content: `Perfect! I've decided - I'm going to get this ${pendingDecision.description}. Let me apply for the financing right now.`,
+            timestamp: new Date()
+          };
+          
+          // 2. System rejection message (CENTER)
+          let systemMessage = '🏦 Loan Application DENIED - Insufficient income for qualification';
+          if (result.error === 'insufficient_funds') {
+            systemMessage = '💳 Purchase DENIED - Insufficient funds in wallet';
+          }
+          
+          const systemRejection: Message = {
+            id: crypto.randomUUID(),
+            type: 'system',
+            content: systemMessage,
+            timestamp: new Date()
+          };
+          
+          console.log('🚨 ADDING DECISION AND SYSTEM REJECTION TO CHAT');
+          setMessages(prev => [...prev, characterDecision, systemRejection]);
+          
+          // 3. Trigger character reaction to the system denial
+          setTimeout(async () => {
+            try {
+              console.log('🚨 TRIGGERING CHARACTER REACTION TO LOAN REJECTION');
+              const reactionResponse = await triggerCharacterReactionAfterSystemEvent({
+                agentKey: selectedCharacter.character_id,
+                usercharId: selectedCharacter.id,
+                domain: 'financial',
+                reasonCode: result.error,
+                details: {
+                  monthly_payment_required: (result as any).monthly_payment_required,
+                  monthly_income_required: (result as any).monthly_income_required,
+                  current_monthly_income: (result as any).current_monthly_income
+                },
+                sessionId: sessionId
+              });
+              
+              console.log('🚨 GOT CHARACTER REACTION RESPONSE:', reactionResponse);
+              
+              // Add the character's authentic reaction to the chat
+              if (reactionResponse.text) {
+                const reactionMessage: Message = {
+                  id: crypto.randomUUID(),
+                  type: 'character',
+                  content: reactionResponse.text,
+                  timestamp: new Date()
+                };
+                console.log('🚨 ADDING REACTION MESSAGE TO CHAT:', reactionMessage.content);
+                setMessages(prev => [...prev, reactionMessage]);
+              } else {
+                console.log('🚨 NO TEXT IN REACTION RESPONSE');
+              }
+            } catch (error) {
+              console.error('🚨 FAILED TO GET CHARACTER REACTION:', error);
+            }
+          }, 500);
+          
+          // Process the rejection outcome
+          outcome = await processDecisionOutcome(pendingDecision, 'rejected', trustLevel, stressLevel);
+          
+          setIsCommittingDecision(false);
+          setPendingDecision(null);
+          return;
+        }
+        
+        // Success - update character financials and send confirmation
+        if (result.financials && selectedCharacter) {
+          setSelectedCharacter({
+            ...selectedCharacter,
+            financials: {
+              ...selectedCharacter.financials,
+              wallet_cents: result.financials.wallet_cents,
+              debt_principal_cents: result.financials.debt_principal_cents,
+            }
+          });
+        }
+        
+        outcome = await processDecisionOutcome(pendingDecision, 'character_choice', trustLevel, stressLevel);
+        const priceCents = Math.round((pendingDecision.amount ?? 0) * 100);
+        const paymentMethod = (selectedCharacter.financials?.wallet_cents ?? 0) >= priceCents ? 'cash' : 'debt';
+        
+        if (paymentMethod === 'debt') {
+          const monthlyPayment = Math.round(priceCents * (0.1299/12) / (1 - Math.pow(1 + (0.1299/12), -24)));
+          coachMessage = `Your character proceeded with financing: $${(priceCents/100).toLocaleString()} (~$${(monthlyPayment/100).toFixed(0)}/month for 24 months).`;
+        } else {
+          coachMessage = `Your character made the purchase with cash: $${(priceCents/100).toLocaleString()}. Wallet updated.`;
+        }
+        
+        // Add success message directly to chat (avoid triggering AI system)
+        const successMessage: Message = {
+          id: crypto.randomUUID(),
+          type: 'player',
+          content: coachMessage,
+          timestamp: new Date()
+        };
+        setMessages(prev => [...prev, successMessage]);
+        
+      } catch (error) {
+        console.error('Error committing character choice decision:', error);
+        outcome = await processDecisionOutcome(pendingDecision, 'rejected', trustLevel, stressLevel);
+        coachMessage = 'There was an error processing your character\'s decision. Please try again.';
+        
+        // Add error message directly to chat (avoid triggering AI system)
+        const errorMessage: Message = {
+          id: crypto.randomUUID(),
+          type: 'player',
+          content: coachMessage,
+          timestamp: new Date()
+        };
+        setMessages(prev => [...prev, errorMessage]);
+      } finally {
+        setIsCommittingDecision(false);
+      }
+    }
+
+    // Add coach message to chat (only if new immediate reaction system didn't handle it)
+    if (!reactionHandledRef.current) {
+      const coachResponseMessage: Message = {
+        id: crypto.randomUUID(),
+        type: 'player',
+        content: coachMessage,
+        timestamp: new Date()
+      };
+      setMessages(prev => [...prev, coachResponseMessage]);
+    }
+
+    // Add detailed decision announcement
+    // Removed wallet calculation - backend handles payment method determination
+    const priceCents = Math.round((pendingDecision.amount ?? 0) * 100);
+    const paymentMethod = 'debt'; // Backend determines actual payment method
+    
+    // Determine coach scoring for announcement
+    const character_action = decisionType === 'bad' ? 'reject' : 'approve';
+    const followed_coach = lastCoachRecommendation ? (
+      (decisionType === 'good' && lastCoachRecommendation === 'approve') ||
+      (decisionType === 'bad' && lastCoachRecommendation === 'reject') ||
+      (decisionType === 'character_choice' && lastCoachRecommendation === 'approve')
+    ) : null;
+    // Legacy coach reward system removed - no longer tracking points
+    
+    // Only show old-style decision messages if new immediate reaction system didn't handle it
+    if (!reactionHandledRef.current) {
+      let announcementContent = '';
+      if (decisionType === 'bad') {
+        announcementContent = `Decision rejected: ${pendingDecision.description} ($${(pendingDecision.amount ?? 0).toLocaleString()})`;
+      } else if (paymentMethod === 'debt') {
+        const monthlyAmount = Math.round(priceCents * (0.1299/12) / (1 - Math.pow(1 + (0.1299/12), -24)));
+        announcementContent = `Decision committed: ${pendingDecision.description} ($${(pendingDecision.amount ?? 0).toLocaleString()}) via financing @ 12.99% • 24 mo • ~$${(monthlyAmount/100).toFixed(0)}/mo`;
+      } else {
+        announcementContent = `Decision committed: ${pendingDecision.description} ($${(pendingDecision.amount ?? 0).toLocaleString()}) (cash)`;
+      }
+      
+      const decisionMessage: Message = {
+        id: crypto.randomUUID(),
+        type: 'system',
+        content: announcementContent,
+        timestamp: new Date()
+      };
+      setMessages(prev => [...prev, decisionMessage]);
+    }
+
+    // Send through HTTP API for character response
+    if (connected && !reactionHandledRef.current) {
+      setIsLoading(true);
+
+      // Use the same format as handleSendMessage for consistency
+      // Using canonicalCharacterId from component scope
+
+      // Get living context and event context for robust response
+      const getLivingContext = async () => {
+        try {
+          const conflictService = ConflictContextService.getInstance();
+          return await conflictService.generateLivingContext(selectedCharacter.id);
+        } catch (error) {
+          console.warn('⚠️ Could not generate living context:', error);
+          return `Living in team quarters with other legendary figures. Current living situation affects financial decisions and stress levels.`;
+        }
+      };
+
+      const getEventContext = async () => {
+        try {
+          const eventContextService = EventContextService.getInstance();
+          const contextString = await eventContextService.getPerformanceContext(selectedCharacter.id);
+          return contextString ? {
+            recentEvents: contextString,
+            relationships: '',
+            emotionalState: 'processing_financial_decision',
+            domainSpecific: 'financial_coaching'
+          } : null;
+        } catch (error) {
+          console.warn('⚠️ Could not generate event context:', error);
+          return null;
+        }
+      };
+
+      // Get contexts and send message
+      const sendMessage = async () => {
+        const livingContext = await getLivingContext();
+        const eventContext = await getEventContext();
+
+        // Check if we have a valid financial tier
+        if (!financialTier) {
+          setError(`Cannot provide financial coaching without tier data for ${selectedCharacter.name || selectedCharacter.id}`);
+          return;
+        }
+
+        // Use the proper FinancialPromptTemplateService
+        const financialPrompt = FinancialPromptTemplateService.generatePrompt({
+          characterId: selectedCharacter.id,
+          characterName: selectedCharacter.name,
+          coachInput: coachMessage,
+          financialState: {
+            wallet: selectedCharacter.financials?.wallet, // NO FALLBACK
+            monthlyEarnings: selectedCharacter.financials?.monthlyEarnings, // NO FALLBACK
+            financialStress: selectedCharacter.financials?.financialStress || 0,
+            coachTrustLevel: selectedCharacter.financials?.coachTrustLevel || 0,
+            spendingPersonality: selectedCharacter.financials?.spendingPersonality || 'moderate',
+            recentDecisions: selectedCharacter.financials?.recentDecisions || [],
+            financialTier: financialTier
+          },
+          decision: pendingDecision ? {
+            id: pendingDecision.id,
+            description: pendingDecision.description,
+            amount: pendingDecision.amount,
+            options: pendingDecision.options,
+            reasoning: pendingDecision.characterReasoning,
+            urgency: pendingDecision.urgency
+          } : undefined,
+          conversationType: 'advice'
+        });
+
+        console.log('🔧 Sending preset decision message:', {
+          message: coachMessage,
+          character: canonicalCharacterId,
+          decisionType,
+          outcome,
+          isConnected: connected
+        });
+
+        // Message handling using universal chat library
+        setIsLoading(false);
+
+        const enriched2 = await enrichCharacter(selectedCharacter);
+        const agentKey2 = mustResolveAgentKey(selectedCharacter?.name, canonicalCharacterId, 'financial');
+        const coachPromptWithTag = ensureBrevityTag(coachMessage, BREVITY_TAGS.finance);
+
+        logAgentKey('finance-decision', { characterId: canonicalCharacterId, agentKey: agentKey2, decisionType, outcome });
+
+        const { text: rawText2 = '' } = await singleFlight(
+          chatFlightKey('finance-decision', sessionId || 'default', agentKey2),
+          () => sendChat(sessionId ?? instanceId, {
+            agentKey: agentKey2,
+            message: coachPromptWithTag,
+            chatType: 'financial_advisor',
+            topic,
+            characterId: canonicalCharacterId,          // <-- canonical for DB/agent
+            meta: {
+              usercharId: instanceId,                   // <-- instance for UI/session
+              characterIdCanonical: canonicalCharacterId,
+              financials: characterForChat.financials,
+              domain: 'financial',
+              domainSpecific: 'financial',
+              // Removed walletCents - backend queries wallet from DB
+              monthlyIncome: 0,  // TODO: Add real income data when available
+              employed: false,        // TODO: Add real employment data when available
+            },
+            characterData: {
+            name: selectedCharacter?.name,
+            archetype: selectedCharacter.archetype,
+            level: selectedCharacter.level,
+            personality: selectedCharacter.personality || {
+              traits: ['Money-conscious'],
+              speechStyle: 'Direct',
+              motivations: ['Financial security'],
+              fears: ['Poverty'],
+              relationships: []
+            },
+            // Add living context and event context
+            livingContext: livingContext,
+            eventContext: eventContext,
+            // Add financial coaching context
+            conversationContext: financialPrompt,
+            // Character stats
+            baseStats: selectedCharacter.baseStats,
+            combatStats: selectedCharacter.combatStats,
+            // Current status
+            currentHp: selectedCharacter.combatStats?.health || 100,
+            maxHp: selectedCharacter.combatStats?.maxHealth || 100,
+            injuries: selectedCharacter.injuries,
+            bondLevel: selectedCharacter.bondLevel || selectedCharacter.displayBondLevel || 0,
+            // Financial-specific context
+            financialStats: {
+              wallet: selectedCharacter.financials?.wallet || 0,
+              monthlyEarnings: selectedCharacter.financials?.monthlyEarnings || 0,
+              financialStress: selectedCharacter.financials?.financialStress || 0,
+              coachTrustLevel: selectedCharacter.financials?.coachTrustLevel || 0,
+              spendingPersonality: selectedCharacter.financials?.spendingPersonality || 'moderate',
+              recentDecisions: selectedCharacter.financials?.recentDecisions || []
+            },
+            // Pending decision context (should be null after decision is made)
+            pendingFinancialDecision: null,
+            // Decision context
+            decisionOutcome: outcome,
+            coachDecision: decisionType,
+
+            // Domain-specific coaching context enhanced with proper templates
+            sessionContext: {
+              type: 'financial_advisory',
+              hasDecision: false, // Decision was just processed
+              focusAreas: ['Financial planning', 'Money decisions', 'Spending habits', 'Financial stress', 'Investment choices', 'Budgeting'],
+              coachingApproach: 'Character-specific financial guidance with era-appropriate perspectives'
+            }
+          },
+          previousMessages: messages.slice(-5).map(msg => ({
+            role: msg.type === 'player' ? 'user' : 'assistant',
+            content: msg.content
+          }))
+        })
+      );
+
+      const text2 = twoSentenceCap(extractAssistantText(rawText2));
+      logResponse('finance-decision', { rawLength: rawText2.length, cappedLength: text2.length });
+
+      setMessages(prev => [...prev, { 
+        id: crypto.randomUUID(), 
+        type: 'character', 
+        content: text2 || 'Welcome to financial coaching!', 
+        timestamp: new Date() 
+      }]);
+      };
+
+      sendMessage().catch(error => {
+        console.error('❌ Error sending preset decision message:', error);
+        setIsLoading(false);
+      });
+    }
+
+    // Clear pending decision
+    setPendingDecision(null);
+  };
+
+  // Generate financial decisions independent of greeting
+  useEffect(() => {
+    const charId = selectedCharacter?.id;
+    console.log('🤖 [TIMER DEBUG] Effect firing:', { charId, hasCharacter: !!selectedCharacter, hasGenerated: generatedForCharRef.current === charId, hasPending: !!pendingDecision });
+    if (!charId) return;
+    if (generatedForCharRef.current === charId || pendingDecision) return;
+    if (genTimerRef.current) clearTimeout(genTimerRef.current);
+    console.log('🤖 Setting decision timer for character:', charId);
+    genTimerRef.current = window.setTimeout(() => {
+      console.log('🤖 Timer fired, checking RNG...');
+      if (Math.random() < 1.0) { // Temporarily 100% for testing
+        console.log('🤖 Generating decision!');
+        const d = generateFinancialDecision(selectedCharacter);
+        setPendingDecision(d);
+        setMessages(p => [...p, { id: crypto.randomUUID(), type: 'decision', timestamp: new Date(),
+          content: `Oh, by the way coach... I ${d.description} for about $${d.amount.toLocaleString()}. ${d.characterReasoning} What do you think I should do?`,
+          decision: { id: d.id, amount: d.amount, options: d.options, reasoning: d.characterReasoning, urgency: d.urgency } }]);
+        generatedForCharRef.current = charId;
+      } else {
+        console.log('🤖 RNG said no decision this time');
+      }
+    }, 800);
+    return () => { if (genTimerRef.current) clearTimeout(genTimerRef.current); };
+  }, [selectedCharacter?.id, pendingDecision]);
+
+  // DISABLED greeting that was causing duplicate scene-setting messages  
+  useEffect(() => {
+    return; 
+    if (!sessionId || greetedRef.current) return;
+    greetedRef.current = true; // guarantee one-time greeting per session
+      // Send initial greeting via HTTP adapter (sendViaAIChat)
+      const initializeChat = async () => {
+        try {
+          // Using canonicalCharacterId from component scope
+          const conflictService = ConflictContextService.getInstance();
+          const eventContextService = EventContextService.getInstance();
+
+          console.log('🆔 Financial greeting using character ID:', canonicalCharacterId, 'for character:', selectedCharacter.name);
+
+          // Try to get living context with graceful error handling
+          let livingContext = null;
+          try {
+            livingContext = await conflictService.generateLivingContext(characterForChat.id);
+            console.log('✅ Living context loaded for financial greeting:', livingContext);
+          } catch (error) {
+            console.warn('⚠️ Could not generate living context for financial greeting:', error);
+            livingContext = `Living in team quarters with other legendary figures. Current living situation affects financial decisions and stress levels.`;
+          }
+
+          // Generate event context for initial greeting
+          let eventContext = null;
+          try {
+            const contextString = await eventContextService.getPerformanceContext(canonicalCharacterId);
+            if (contextString) {
+              eventContext = {
+                recentEvents: contextString,
+                relationships: '',
+                emotionalState: 'meeting_financial_coach',
+                domainSpecific: 'financial_coaching_greeting'
+              };
+            }
+          } catch (error) {
+            console.warn('⚠️ Could not generate event context for financial greeting:', error);
+          }
+
+          // Generate proper financial coaching context for greeting
+          const greetingMessage = "Hello! I wanted to talk to you about your finances.";
+          const greetingPrompt = `You are ${selectedCharacter?.name}, a legendary figure, meeting with your team's financial advisor for the first time.
+
+SESSION TYPE: Financial Advisory Introduction
+
+FINANCIAL COACHING CONTEXT:
+- Current wallet: $${selectedCharacter.financials?.wallet?.toLocaleString() || '0'}
+- Monthly earnings: $${selectedCharacter.financials?.monthlyEarnings?.toLocaleString() || '0'}
+- Financial stress level: ${selectedCharacter.financials?.financialStress || 0}%
+- Trust in coach: ${selectedCharacter.financials?.coachTrustLevel || 0}%
+- Spending personality: ${selectedCharacter.financials?.spendingPersonality || 'moderate'}
+- Recent decisions: ${selectedCharacter.financials?.recentDecisions?.length || 0} previous financial choices
+
+CHARACTER FINANCIAL PSYCHOLOGY:
+- You are a legendary figure from your era, so modern financial concepts might be foreign or fascinating
+- React to financial advice based on your background and personality
+- Your trust level (${selectedCharacter.financials?.coachTrustLevel || 0}%) affects how you receive coaching
+- Your financial stress (${selectedCharacter.financials?.financialStress || 0}%) influences your openness
+- Your spending personality (${selectedCharacter.financials?.spendingPersonality || 'moderate'}) shapes your money attitudes
+
+FINANCIAL COACHING SESSION GUIDELINES:
+- This is the start of a financial coaching relationship
+- Respond authentically as ${selectedCharacter?.name} would to meeting a financial advisor
+- Show your character's initial reaction to financial guidance based on your era and personality
+- Consider whether you'd be skeptical, curious, defensive, or eager about financial help
+- Your response sets the tone for the financial coaching relationship
+
+Respond as ${selectedCharacter?.name} would when first meeting a financial coach, showing authentic reactions based on your character background and relationship with money.`;
+
+          // Use universal chat library for greeting
+          const enriched3 = await enrichCharacter(selectedCharacter);
+          const agentKey3 = mustResolveAgentKey(selectedCharacter?.name, canonicalCharacterId, 'financial');
+          const greetingPromptWithTag = ensureBrevityTag(greetingPrompt, BREVITY_TAGS.finance);
+
+          logAgentKey('finance-greeting', { characterId: canonicalCharacterId, agentKey: agentKey3, name: enriched3.name });
+
+          const { text: rawText3 = '' } = await singleFlight(
+            chatFlightKey('finance-greeting', sessionId || 'default', agentKey3),
+            () => sendChat(sessionId ?? instanceId, {
+              agentKey: agentKey3,
+              message: greetingPromptWithTag,
+              chatType: 'financial_advisor',
+              topic,
+              characterId: canonicalCharacterId,          // <-- canonical for DB/agent
+              meta: {
+                usercharId: instanceId,                   // <-- instance for UI/session
+                characterIdCanonical: canonicalCharacterId,
+                financials: characterForChat.financials,
+                domain: 'financial',
+                domainSpecific: 'financial',
+                // Removed walletCents - backend queries wallet from DB
+                monthlyIncome: 0,  // TODO: Add real income data when available
+                employed: false,        // TODO: Add real employment data when available
+              },
+              characterData: {
+              name: selectedCharacter?.name,
+              archetype: selectedCharacter.archetype,
+              level: selectedCharacter.level,
+              personality: selectedCharacter.personality || {
+                traits: ['Money-conscious'],
+                speechStyle: 'Direct',
+                motivations: ['Financial security'],
+                fears: ['Poverty'],
+                relationships: []
+              },
+              // Add living context for conflict awareness
+              livingContext: livingContext,
+              // Add centralized event context
+              eventContext: eventContext,
+              // Character stats
+              baseStats: selectedCharacter.baseStats,
+              combatStats: selectedCharacter.combatStats,
+              // Current status
+              currentHp: selectedCharacter.combatStats?.health || 100,
+              maxHp: selectedCharacter.combatStats?.maxHealth || 100,
+              injuries: selectedCharacter.injuries,
+              bondLevel: selectedCharacter.bondLevel || selectedCharacter.displayBondLevel || 0,
+              // Financial-specific context
+              financialStats: {
+                wallet: selectedCharacter.financials?.wallet || 0,
+                monthlyEarnings: selectedCharacter.financials?.monthlyEarnings || 0,
+                financialStress: selectedCharacter.financials?.financialStress || 0,
+                coachTrustLevel: selectedCharacter.financials?.coachTrustLevel || 0,
+                spendingPersonality: selectedCharacter.financials?.spendingPersonality || 'moderate',
+                recentDecisions: selectedCharacter.financials?.recentDecisions || []
+              },
+              // Add comprehensive financial coaching conversation context like CoachingSessionChat
+              conversationContext: `${greetingPrompt}`,
+
+              // Domain-specific coaching context enhanced with proper templates
+              sessionContext: {
+                type: 'financial_advisory',
+                hasDecision: false,
+                focusAreas: ['Financial planning', 'Money decisions', 'Initial assessment', 'Trust building'],
+                coachingApproach: 'Character-specific financial introduction with era-appropriate perspectives',
+                sessionStage: 'greeting'
+              }
+            },
+            previousMessages: []
+            })
+          );
+
+          const text3 = twoSentenceCap(extractAssistantText(rawText3));
+          logResponse('finance-greeting', { rawLength: rawText3.length, cappedLength: text3.length });
+
+          setMessages(prev => [...prev, { 
+            id: crypto.randomUUID(), 
+            type:'character', 
+            content: text3 || 'Welcome to financial coaching!', 
+            timestamp: new Date() 
+          }]);
+        } catch (error) {
+          console.error('Failed to initialize financial chat:', error);
+          const errorMessage: Message = {
+            id: crypto.randomUUID(),
+            type: 'system',
+            content: `Error initializing chat: ${error instanceof Error ? error.message : 'Unknown error'}`,
+            timestamp: new Date()
+          };
+          setMessages([errorMessage]);
+        }
+      };
+
+      initializeChat();
+
+      // Generate an initial decision after a short delay
+      const timeoutId = setTimeout(async () => {
+        if (!pendingDecision) { // Double check to prevent race conditions
+          const decision = generateFinancialDecision(selectedCharacter);
+
+          // Check if this should be automated
+          const autoDecision = shouldAutomate(decision, selectedCharacter);
+
+          console.log('🤖 Initial decision automation check:', {
+            decision: decision.description,
+            amount: decision.amount,
+            wallet: selectedCharacter.financials?.wallet || 19073,
+            autoDecision,
+            percentOfWallet: ((decision.amount / (selectedCharacter.financials?.wallet || 19073)) * 100).toFixed(1) + '%'
+          });
+
+          if (autoDecision) {
+            // Process automatically without showing to user
+            const outcome = await processDecisionOutcome(decision, autoDecision === 'bad' ? 'rejected' : 'approved', selectedCharacter.financials?.coachTrustLevel || 50, selectedCharacter.financials?.financialStress || 30);
+
+            const autoMessage: Message = {
+              id: crypto.randomUUID(),
+              type: 'system',
+              content: `${selectedCharacter.name} ${autoDecision === 'bad' ? 'decided against' : 'went ahead with'} ${decision.description} (${autoDecision === 'bad' ? 'clearly risky' : 'obviously good'} decision). ${outcome?.message || ''}`,
+              timestamp: new Date()
+            };
+
+            setMessages(prev => [...prev, autoMessage]);
+          } else {
+            // Show to user for manual coaching
+            setPendingDecision(decision);
+
+            const decisionMessage: Message = {
+              id: crypto.randomUUID(),
+              type: 'decision',
+              content: `Oh, by the way coach... I've been thinking. I ${decision.description} for about $${decision.amount.toLocaleString()}. ${decision.characterReasoning} What do you think I should do?`,
+              timestamp: new Date(),
+              decision: {
+                id: decision.id,
+                amount: decision.amount,
+                options: decision.options,
+                reasoning: decision.characterReasoning,
+                urgency: decision.urgency
+              }
+            };
+
+            setMessages(prev => [...prev, decisionMessage]);
+          }
+        }
+      }, 8000); // Wait longer for initial greeting to complete
+
+      initializeChat().catch((error) => {
+        console.error('Failed to initialize financial chat:', error);
+        const errorMessage: Message = {
+          id: crypto.randomUUID(),
+          type: 'system',
+          content: `Error initializing chat: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          timestamp: new Date()
+        };
+        setMessages([errorMessage]);
+      });
+
+      return () => clearTimeout(timeoutId);
+    
+    // do NOT reset didInitRef on unmount; that defeats the guard in StrictMode
+  }, [sessionId]); // IMPORTANT: only depend on sessionId, not selectedCharacter/topic/etc.
+
+  if (!characterForChat) {
+    return (
+      <div className="flex items-center justify-center h-64 text-gray-400">
+        <p>Select a character to start financial coaching</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="bg-gray-800/50 rounded-xl p-6 border border-gray-700">
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-3">
+          <DollarSign className="w-6 h-6 text-green-400" />
+          <h3 className="text-xl font-bold text-white">Financial Advisor Chat with {characterForChat.name}</h3>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className={`w-2 h-2 rounded-full ${connected ? 'bg-green-500' : 'bg-red-500'}`} />
+          <span className="text-sm text-gray-400">
+            {connected ? 'Connected' : connectionError || 'Disconnected'}
+          </span>
+        </div>
+      </div>
+
+      {/* Financial Status Bar */}
+      <div className="grid grid-cols-3 gap-4 mb-4 p-3 bg-gray-700/30 rounded-lg">
+        <div className="text-center">
+          <div className="text-sm text-gray-400">Wallet</div>
+          <div className="text-lg font-bold text-green-400">${(characterForChat?.financials?.wallet ?? 0).toFixed(2)}</div>
+        </div>
+        <div className="text-center">
+          <div className="text-sm text-gray-400">Stress</div>
+          <div className={`text-lg font-bold ${characterForChat.financials.financialStress > 50 ? 'text-red-400' : 'text-blue-400'}`}>
+            {characterForChat.financials.financialStress}%
+          </div>
+        </div>
+        <div className="text-center">
+          <div className="text-sm text-gray-400">Trust</div>
+          <div className="text-lg font-bold text-purple-400">{characterForChat.financials.coachTrustLevel}%</div>
+        </div>
+      </div>
+
+      {/* Budget Allocation Section */}
+      <BudgetAllocationUI 
+        selectedCharacter={selectedCharacter}
+        onBudgetUpdate={(equipmentBudget: number, consumablesBudget: number) => {
+          // Update character's financial data with new budgets
+          if (selectedCharacter?.financials) {
+            selectedCharacter.financials.equipment_budget = equipmentBudget;
+            selectedCharacter.financials.consumables_budget = consumablesBudget;
+          }
+        }}
+      />
+
+      {/* Chat Messages */}
+      <div className="h-96 overflow-y-auto mb-4 space-y-3 p-4 bg-gray-900/30 rounded-lg">
+        {messages.map((message, index) => (
+          <SafeMotion
+            key={message.messageId || message.id || `${message.timestamp}-${message.type}-${index}`}
+            initial={{ opacity: 0, y: isMobile ? 0 : 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: isMobile ? 0.1 : 0.3 }}
+            className={`flex ${message.type === 'player' ? 'justify-end' : message.type === 'system' ? 'justify-center' : 'justify-start'}`}
+          >
+            <div className={`max-w-xs lg:max-w-md xl:max-w-lg px-4 py-2 rounded-lg ${
+              message.type === 'player'
+                ? 'bg-green-600 text-white'
+                : message.type === 'decision'
+                ? 'bg-yellow-600/80 text-white border-2 border-yellow-400'
+                : message.type === 'system'
+                ? 'bg-gray-600/50 text-gray-300 border border-gray-500 text-center'
+                : 'bg-gray-700 text-gray-100'
+            }`}>
+              {message.type === 'decision' && (
+                <div className="flex items-center gap-2 mb-2">
+                  <AlertTriangle className="w-4 h-4" />
+                  <span className="font-semibold">Financial Decision</span>
+                </div>
+              )}
+              <p className="text-sm">{message.content}</p>
+              {message.decision && (
+                <div className="mt-2 pt-2 border-t border-yellow-300/30">
+                  <div className="text-xs text-yellow-200">
+                    <strong>Options:</strong> {message.decision.options.join(', ')}
+                  </div>
+                  <div className="text-xs text-yellow-200 mt-1">
+                    <strong>Urgency:</strong> {message.decision.urgency}
+                  </div>
+                </div>
+              )}
+            </div>
+          </SafeMotion>
+        ))}
+        {isLoading && (
+          <div className="flex justify-start">
+            <div className="bg-gray-700 px-4 py-2 rounded-lg">
+              <div className="flex items-center space-x-1">
+                <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
+                <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{animationDelay: '0.1s'}}></div>
+                <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{animationDelay: '0.2s'}}></div>
+              </div>
+            </div>
+          </div>
+        )}
+        <div ref={messagesEndRef} />
+      </div>
+
+
+      {/* Preset Decision Buttons */}
+      {pendingDecision && (
+        <div className="mb-4">
+          <div className="text-sm text-gray-400 mb-2">Coach recommendation:</div>
+          <div className="grid grid-cols-3 gap-2">
+            <button
+              onClick={() => handlePresetDecision('bad')}
+              disabled={isCommittingDecision}
+              className={`p-3 bg-red-600/20 border border-red-500 rounded-lg text-sm text-red-300 transition-all flex flex-col items-center gap-1 ${
+                isCommittingDecision ? 'opacity-50 cursor-not-allowed' : 'hover:bg-red-600/30'
+              }`}
+            >
+              <AlertTriangle className="w-4 h-4" />
+              <span>Bad Decision</span>
+              <span className="text-xs opacity-75">Reject & explain risks</span>
+            </button>
+            <button
+              onClick={() => handlePresetDecision('good')}
+              disabled={isCommittingDecision}
+              className={`p-3 bg-green-600/20 border border-green-500 rounded-lg text-sm text-green-300 transition-all flex flex-col items-center gap-1 ${
+                isCommittingDecision ? 'opacity-50 cursor-not-allowed' : 'hover:bg-green-600/30'
+              }`}
+            >
+              {isCommittingDecision ? (
+                <div className="w-4 h-4 border-2 border-green-300 border-t-transparent rounded-full animate-spin" />
+              ) : (
+                <TrendingUp className="w-4 h-4" />
+              )}
+              <span>{isCommittingDecision ? 'Processing...' : 'Good Decision'}</span>
+              <span className="text-xs opacity-75">Approve & support</span>
+            </button>
+            <button
+              onClick={() => handlePresetDecision('character_choice')}
+              disabled={isCommittingDecision}
+              className={`p-3 bg-blue-600/20 border border-blue-500 rounded-lg text-sm text-blue-300 transition-all flex flex-col items-center gap-1 ${
+                isCommittingDecision ? 'opacity-50 cursor-not-allowed' : 'hover:bg-blue-600/30'
+              }`}
+            >
+              {isCommittingDecision ? (
+                <div className="w-4 h-4 border-2 border-blue-300 border-t-transparent rounded-full animate-spin" />
+              ) : (
+                <DollarSign className="w-4 h-4" />
+              )}
+              <span>{isCommittingDecision ? 'Processing...' : "Character's Choice"}</span>
+              <span className="text-xs opacity-75">Let them decide</span>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Chat Feedback */}
+      {lastFeedback && (
+        <ChatFeedback feedbackData={lastFeedback} />
+      )}
+
+      {/* Topic Selector - Hidden, not needed for normal use */}
+      {false && (
+        <div className="mb-2 flex items-center gap-2">
+          <label className="text-sm opacity-80">Topic</label>
+          <select
+            className="bg-gray-900/40 rounded px-2 py-1"
+            value={topic}
+            onChange={(e) => setTopic(e.target.value)}
+          >
+            <option value="">(none)</option>
+            {FIN_TOPICS.map(t => <option key={t} value={t}>{t}</option>)}
+          </select>
+        </div>
+      )}
+
+      {/* Message Input */}
+      <div className="flex gap-2">
+        <input
+          type="text"
+          value={inputMessage}
+          onChange={(e) => setInputMessage(e.target.value)}
+          onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
+          placeholder={pendingDecision ? "Give financial advice..." : "Chat with your character..."}
+          className="flex-1 px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:border-green-500"
+          disabled={isLoading || !connected}
+        />
+        <button
+          onClick={handleSendMessage}
+          disabled={isLoading || !inputMessage.trim() || !connected}
+          className="px-4 py-2 bg-green-600 hover:bg-green-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white rounded-lg transition-all flex items-center gap-2"
+        >
+          <Send className="w-4 h-4" />
+        </button>
+      </div>
+    </div>
+  );
+};
+
+export default FinancialAdvisorChat;

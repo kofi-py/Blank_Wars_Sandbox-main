@@ -1,0 +1,90 @@
+digraph "Team Management & Drama" {
+  rankdir=TB;
+  node [shape=plaintext];
+  edge [color="#666666", penwidth=1.5];
+  bgcolor="transparent";
+
+  labelloc="t";
+  label="Team Management & Drama\nKeeping your AIs functional - Therapy, conflicts, HQ drama";
+  fontsize=16;
+  fontname="Arial Bold";
+
+  character_healing_sessions [label=<
+    <TABLE BORDER="2" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white">
+      <TR><TD BGCOLOR="#9B59B6" ALIGN="CENTER"><FONT COLOR="white" POINT-SIZE="14"><B>character_healing_sessions</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="id">id 🔑 : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="character_id">character_id : text</TD></TR>
+      <TR><TD ALIGN="CENTER" BGCOLOR="#F0F0F0"><I>+ 9 more columns</I></TD></TR>
+    </TABLE>
+  >];
+
+  headquarters_rooms [label=<
+    <TABLE BORDER="2" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white">
+      <TR><TD BGCOLOR="#9B59B6" ALIGN="CENTER"><FONT COLOR="white" POINT-SIZE="14"><B>headquarters_rooms</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="id">id 🔑 : uuid</TD></TR>
+      <TR><TD ALIGN="CENTER" BGCOLOR="#F0F0F0"><I>+ 12 more columns</I></TD></TR>
+    </TABLE>
+  >];
+
+  team_context [label=<
+    <TABLE BORDER="2" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white">
+      <TR><TD BGCOLOR="#9B59B6" ALIGN="CENTER"><FONT COLOR="white" POINT-SIZE="14"><B>team_context</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="id">id 🔑 : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="hq_tier">hq_tier : character varying</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="current_scene_type">current_scene_type : character varying</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="master_bed_character_id"><B>master_bed_character_id</B> : character varying</TD></TR>
+      <TR><TD ALIGN="CENTER" BGCOLOR="#F0F0F0"><I>+ 5 more columns</I></TD></TR>
+    </TABLE>
+  >];
+
+  healing_facilities [label=<
+    <TABLE BORDER="2" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white">
+      <TR><TD BGCOLOR="#9B59B6" ALIGN="CENTER"><FONT COLOR="white" POINT-SIZE="14"><B>healing_facilities</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="id">id 🔑 : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="name">name : text</TD></TR>
+      <TR><TD ALIGN="CENTER" BGCOLOR="#F0F0F0"><I>+ 8 more columns</I></TD></TR>
+    </TABLE>
+  >];
+
+  character_memories [label=<
+    <TABLE BORDER="2" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white">
+      <TR><TD BGCOLOR="#9B59B6" ALIGN="CENTER"><FONT COLOR="white" POINT-SIZE="14"><B>character_memories</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="id">id 🔑 : character varying</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="character_id">character_id : character varying</TD></TR>
+      <TR><TD ALIGN="CENTER" BGCOLOR="#F0F0F0"><I>+ 17 more columns</I></TD></TR>
+    </TABLE>
+  >];
+
+  chat_sessions [label=<
+    <TABLE BORDER="2" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white">
+      <TR><TD BGCOLOR="#9B59B6" ALIGN="CENTER"><FONT COLOR="white" POINT-SIZE="14"><B>chat_sessions</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="chat_id">chat_id 🔑 : character varying</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="current_turn_count">current_turn_count : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="created_at">created_at : timestamp without time zone</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="updated_at">updated_at : timestamp without time zone</TD></TR>
+    </TABLE>
+  >];
+
+  user_headquarters [label=<
+    <TABLE BORDER="2" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white">
+      <TR><TD BGCOLOR="#9B59B6" ALIGN="CENTER"><FONT COLOR="white" POINT-SIZE="14"><B>user_headquarters</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="id">id 🔑 : uuid</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="user_id">user_id : text</TD></TR>
+      <TR><TD ALIGN="CENTER" BGCOLOR="#F0F0F0"><I>+ 6 more columns</I></TD></TR>
+    </TABLE>
+  >];
+
+  chat_messages [label=<
+    <TABLE BORDER="2" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white">
+      <TR><TD BGCOLOR="#9B59B6" ALIGN="CENTER"><FONT COLOR="white" POINT-SIZE="14"><B>chat_messages</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="id">id 🔑 : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="user_id">user_id : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="character_id">character_id : text</TD></TR>
+      <TR><TD ALIGN="CENTER" BGCOLOR="#F0F0F0"><I>+ 10 more columns</I></TD></TR>
+    </TABLE>
+  >];
+
+  // Relationships
+  character_healing_sessions:facility_id -> healing_facilities:id;
+  headquarters_rooms:headquarters_id -> user_headquarters:id;
+}

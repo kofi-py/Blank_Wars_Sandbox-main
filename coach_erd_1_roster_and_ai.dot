@@ -1,0 +1,56 @@
+digraph "Your Roster & Character AI" {
+  rankdir=TB;
+  node [shape=plaintext];
+  edge [color="#666666", penwidth=1.5];
+  bgcolor="transparent";
+
+  labelloc="t";
+  label="Your Roster & Character AI\nWho you're coaching - AI fighters with personality, finances, psychology";
+  fontsize=16;
+  fontname="Arial Bold";
+
+  characters [label=<
+    <TABLE BORDER="2" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white">
+      <TR><TD BGCOLOR="#E74C3C" ALIGN="CENTER"><FONT COLOR="white" POINT-SIZE="14"><B>characters</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="id">id 🔑 : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="name">name : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="rarity">rarity : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="current_mental_health"><B>current_mental_health</B> : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="team_trust">team_trust : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="species">species : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="comedian_name">comedian_name : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="comedy_style">comedy_style : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="role">role : character varying</TD></TR>
+      <TR><TD ALIGN="CENTER" BGCOLOR="#F0F0F0"><I>+ 26 more columns</I></TD></TR>
+    </TABLE>
+  >];
+
+  user_characters [label=<
+    <TABLE BORDER="2" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white">
+      <TR><TD BGCOLOR="#E74C3C" ALIGN="CENTER"><FONT COLOR="white" POINT-SIZE="14"><B>user_characters</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="id">id 🔑 : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="user_id">user_id : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="character_id">character_id : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="bond_level">bond_level : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="wallet"><B>wallet</B> : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="current_mental_health"><B>current_mental_health</B> : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="team_trust">team_trust : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="morale">morale : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="debt">debt : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="financial_personality"><B>financial_personality</B> : jsonb</TD></TR>
+      <TR><TD ALIGN="CENTER" BGCOLOR="#F0F0F0"><I>+ 44 more columns</I></TD></TR>
+    </TABLE>
+  >];
+
+  users [label=<
+    <TABLE BORDER="2" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white">
+      <TR><TD BGCOLOR="#E74C3C" ALIGN="CENTER"><FONT COLOR="white" POINT-SIZE="14"><B>users</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="id">id 🔑 : text</TD></TR>
+      <TR><TD ALIGN="CENTER" BGCOLOR="#F0F0F0"><I>+ 22 more columns</I></TD></TR>
+    </TABLE>
+  >];
+
+  // Relationships
+  user_characters:user_id -> users:id;
+  user_characters:character_id -> characters:id;
+}

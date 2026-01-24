@@ -1,0 +1,400 @@
+// Comprehensive Character Database
+// Full character stats, abilities, progression trees, and game data
+
+import { CharacterExperience } from '../../../frontend/src/data/experience';
+import { CharacterAbilities } from '../../../frontend/src/data/abilities';
+import { CharacterSkills } from '../../../frontend/src/data/characterProgression';
+import { Equipment } from './equipment';
+// Note: allEquipment now loaded from database via equipmentCache
+import { Item } from '../../../frontend/src/data/items';
+
+export type CharacterArchetype =
+  | 'warrior' | 'mage' | 'assassin' | 'tank' | 'support'
+  | 'beast' | 'trickster' | 'mystic' | 'elementalist' | 'berserker' | 'scholar' | 'detective';
+
+export type CharacterRarity = 'common' | 'uncommon' | 'rare' | 'epic' | 'legendary' | 'mythic';
+
+export type StatType = 'strength' | 'agility' | 'intelligence' | 'vitality' | 'wisdom' | 'charisma';
+
+// Financial Decision interface for character financial history
+export interface FinancialDecision {
+  // Core identity
+  id: string;
+  character_id: string;
+  timestamp: Date;
+
+  // Decision details
+  description: string;
+  category: 'investment' | 'real_estate' | 'luxury_purchase' | 'party' | 'wildcard' | 'other';
+  amount: number;
+
+  // Decision context (filled at creation)
+  options: string[];
+  character_reasoning: string;
+  urgency: 'low' | 'medium' | 'high';
+  status: 'pending' | 'decided' | 'influenced';
+
+  // Coach interaction (filled during processing)
+  coach_advice?: string;
+  coach_decision?: string; // 'approved', 'declined', 'ignored'
+  coach_influence_attempts: number;
+  followed_advice?: boolean;
+  final_decision?: string;
+
+  // Outcome (filled after resolution)
+  outcome?: 'positive' | 'negative' | 'neutral' | 'pending' | 'successful_decision' | 'ignored_advice' | 'decision_avoided' | 'independent_choice';
+  financial_impact?: number;
+  stress_impact?: number;
+  relationship_impact?: number;
+}
+
+// Financial personality traits that are part of character templates (immutable)
+export interface FinancialPersonality {
+  spending_style: 'conservative' | 'moderate' | 'impulsive' | 'strategic';
+  money_motivations: string[]; // ['glory', 'status', 'security', 'power', 'family']
+  financial_wisdom: number; // 0-100, base financial intelligence
+  risk_tolerance: number; // 0-100, willingness to take financial risks
+  luxury_desire: number; // 0-100, desire for expensive things
+  generosity: number; // 0-100, willingness to spend on others
+  financial_traumas: string[]; // Past financial experiences that shape behavior
+  money_beliefs: string[]; // Core beliefs about money and wealth
+}
+
+// Traditional stats from TeamCharacter (battle system compatibility)
+export interface TraditionalStats {
+  strength: number;      // Physical damage output (0-100)
+  stamina: number;      // HP and damage resistance (0-100)
+  speed: number;         // Turn order, dodge chance (0-100)
+  dexterity: number;     // Accuracy, critical chance (0-100)
+  intelligence: number;  // Spell power, tactics (0-100)
+  charisma: number;      // Social attacks, inspiration (0-100)
+  spirit: number;        // Special ability power (0-100)
+}
+
+export interface CombatStats {
+  health: number;
+  max_health: number;
+  mana: number;
+  max_mana: number;
+  attack: number;
+  defense: number;
+  magic_attack: number;
+  magic_defense: number;
+  speed: number;
+  critical_chance: number;
+  critical_damage: number;
+  accuracy: number;
+  evasion: number;
+}
+
+export interface CharacterPersonality {
+  traits: string[];           // Bold, Strategic, Honorable, etc.
+  speech_style: string;        // Formal, Casual, Poetic, Aggressive
+  motivations: string[];      // Glory, Knowledge, Revenge, etc.
+  fears: string[];           // Death, Failure, Betrayal, etc.
+  quirks?: string[];         // Unique behavioral quirks
+  relationships: {           // Bonds with other characters
+    character_id: string;
+    relationship: 'ally' | 'rival' | 'mentor' | 'student' | 'enemy' | 'neutral';
+    strength: number;        // -100 to 100
+    history?: string;
+  }[];
+}
+
+export interface ProgressionTree {
+  branches: {
+    name: string;
+    description: string;
+    requirements: {
+      level?: number;
+      stats?: Record<string, number>;
+      completed_nodes?: string[];
+    };
+    nodes: ProgressionNode[];
+  }[];
+}
+
+export interface ProgressionNode {
+  id: string;
+  name: string;
+  description: string;
+  type: 'stat' | 'ability' | 'passive' | 'special' | 'active';
+  requirements: {
+    level: number;
+    points: number;
+    prerequisite_nodes?: string[];
+  };
+  rewards: {
+    stats?: Record<string, number>;
+    abilities?: string[];
+    passives?: string[];
+    unlocks?: string[];
+  };
+  position: { x: number; y: number }; // For tree visualization
+  is_unlocked: boolean;
+  is_active: boolean;
+}
+
+// Battle-specific interfaces from TeamCharacter
+export interface BattleAbility {
+  id: string;
+  name: string;
+  type: 'attack' | 'defense' | 'special' | 'support';
+  power: number;
+  cooldown: number;
+  current_cooldown: number;
+  description: string;
+  icon: string;
+  mental_healthRequired: number; // Minimum mental health to use reliably
+}
+
+export interface SpecialPower {
+  id: string;
+  name: string;
+  type: 'passive' | 'active' | 'combo';
+  description: string;
+  effect: string;
+  icon: string;
+  cooldown: number;
+  current_cooldown: number;
+  team_playerRequired?: number; // Some abilities require teamwork
+}
+
+// Static character template data (game design, progression trees, etc.)
+export interface CharacterTemplate {
+  // Basic Info
+  id: string;
+  character_id: string;
+  slug?: string;
+  template_id?: string;
+  name: string;
+  display_name?: string;
+  title?: string;
+  avatar: string;
+  archetype: CharacterArchetype;
+  rarity: CharacterRarity;
+
+  // Lore & Personality
+  description: string;
+  historical_period: string;
+  mythology: string;
+  personality: CharacterPersonality;
+
+  // Core Stats
+  level: number;
+
+  // Combat Stats (from DB)
+  health: number;
+  attack: number;
+  defense: number;
+  speed: number;
+  magic_attack: number;
+  magic_defense: number;
+
+  // Attribute Stats (from DB)
+  strength: number;
+  dexterity: number;
+  stamina: number;
+  intelligence: number;
+  wisdom: number;
+  charisma: number;
+  spirit: number;
+  stat_points: number;
+
+  // Progression
+  experience: CharacterExperience;
+  skills: CharacterSkills;
+  abilities: CharacterAbilities;
+  progression_tree: ProgressionTree;
+
+  // Equipment & Items
+  equipped_items: {
+    weapon?: Equipment;
+    armor?: Equipment;
+    accessory?: Equipment;
+  };
+  inventory: Item[];
+  items: Item[];  // Active usable items in battle
+
+  // Unlocks & Achievements
+  unlocked_content: string[];
+  achievements: string[];
+
+  // Game Mechanics
+  training_level: number;        // 0-100, affects gameplan adherence and learning rate
+  bond_level: number;            // 0-100, relationship with player
+  fatigue: number;              // 0-100, affects performance
+  energy: number;               // 0-max_energy, current training energy
+  max_energy: number;           // Maximum training energy capacity
+  last_training_date?: Date;
+
+  // Psychology Stats - determines mental state and team dynamics
+  psych_stats: {
+    training: number;           // 0-100, how well they follow instructions
+    team_player: number;        // 0-100, how well they work with others
+    ego: number;                // 0-100, how arrogant/self-important they are
+    mental_health: number;      // 0-100, psychological stability
+    communication: number;      // 0-100, how well they express themselves
+  };
+
+  // Financial Personality (immutable template data)
+  financial_personality: FinancialPersonality;
+
+  // Financial System - Dynamic Data (from database only)
+  wallet?: number;
+  monthly_earnings?: number;
+  financial_stress?: number;
+  coach_financial_trust?: number;
+  recent_decisions?: FinancialDecision[];
+  debt?: number;
+
+  // Battle AI
+  battle_ai: {
+    aggression: number;         // 0-100
+    defensiveness: number;      // 0-100
+    risk_taking: number;         // 0-100
+    adaptability: number;       // 0-100
+    preferred_strategies: string[];
+  };
+
+  // Customization
+  customization: {
+    outfit?: string;
+    weapon_skin?: string;
+    battle_quotes: string[];
+    victory_animation?: string;
+  };
+
+  // Battle-specific fields from TeamCharacter
+  // traditionalStats removed - use flat fields instead (strength, dexterity, stamina, intelligence, wisdom, charisma, spirit, speed)
+  // temporaryStats removed - coaching boosts should modify flat stats directly
+  current_health: number;                           // Current HP in battle
+  max_health: number;                              // Maximum HP in battle
+  experience_to_next: number;                   // Experience needed for next level
+
+  // Battle personality traits (different from main personality)
+  personality_traits: string[];                // ['Brilliant', 'Arrogant', etc.]
+  speaking_style: 'formal' | 'casual' | 'archaic' | 'technical' | 'poetic' | 'gruff' | 'mysterious';
+  decision_making: 'logical' | 'emotional' | 'impulsive' | 'calculated';
+  conflict_response: 'aggressive' | 'diplomatic' | 'withdrawn' | 'manipulative';
+
+  // Battle status
+  status_effects: string[];                    // Active status effects in battle
+  injuries: string[];                         // Current injuries affecting performance
+  rest_days_needed: number;                     // Recovery time needed
+
+  // Battle abilities (enhanced from abilities)
+  battle_abilities: BattleAbility[];           // Battle-specific abilities with cooldowns
+  special_powers: SpecialPower[];              // Special powers with team requirements
+
+  // Additional properties for compatibility
+  accuracy?: number;
+  backstory?: string;
+  base_name?: string;
+  conversation_style?: string;
+  conversation_topics?: string[];
+  critical_chance?: number;
+  critical_damage?: number;
+  energy_regen?: number;
+  equipment?: any;
+  evasion?: number;
+  gameplan_adherence?: number;
+  headshot?: string;
+  mana?: number;
+  max_mana?: number;
+  origin_era?: string;
+  species?: string;
+  stats?: any;
+  stress_level?: number;
+  team_trust?: number;
+  temporary_stats?: any;
+}
+
+
+// ============================================================
+// characterTemplates DELETED - 1650 lines of hardcoded data removed
+// All character data should now come from backend API
+// ============================================================
+
+// Character utility functions removed - use backend API instead
+// characterTemplates object deleted - was 1650 lines of hardcoded demo data
+
+/**
+ * Generate financial personality based on character archetype and traits
+ * NOTE: This function is kept for legacy compatibility but should be replaced with backend data
+ */
+function generateFinancialPersonality(templateId: string, archetype: CharacterArchetype): FinancialPersonality {
+  const personalityMap: Record<string, Partial<FinancialPersonality>> = {
+    // Warriors - Generally impulsive spenders focused on glory
+    achilles: {
+      spending_style: 'impulsive',
+      money_motivations: ['glory', 'status', 'honor'],
+      financial_wisdom: 30,
+      risk_tolerance: 85,
+      luxury_desire: 70,
+      generosity: 80,
+      financial_traumas: ['Lost family fortune in war'],
+      money_beliefs: ['Money is for glory', 'Wealth should serve honor', 'Riches come to the victorious']
+    },
+    // Mages - Strategic with money, focused on knowledge
+    merlin: {
+      spending_style: 'strategic',
+      money_motivations: ['knowledge', 'power', 'legacy'],
+      financial_wisdom: 90,
+      risk_tolerance: 40,
+      luxury_desire: 30,
+      generosity: 70,
+      financial_traumas: [],
+      money_beliefs: ['Wisdom is worth more than gold', 'Invest in knowledge', 'Money is a tool, not a goal']
+    }
+  };
+
+  // Get specific personality or generate default based on archetype
+  const specific = personalityMap[templateId];
+  const defaultByArchetype: Record<CharacterArchetype, Partial<FinancialPersonality>> = {
+    warrior: { spending_style: 'impulsive', risk_tolerance: 80, luxury_desire: 60 },
+    mage: { spending_style: 'strategic', risk_tolerance: 30, financial_wisdom: 70 },
+    assassin: { spending_style: 'strategic', risk_tolerance: 60, luxury_desire: 40 },
+    tank: { spending_style: 'conservative', risk_tolerance: 20, generosity: 80 },
+    support: { spending_style: 'moderate', risk_tolerance: 40, generosity: 90 },
+    beast: { spending_style: 'impulsive', risk_tolerance: 70, financial_wisdom: 20 },
+    trickster: { spending_style: 'strategic', risk_tolerance: 90, luxury_desire: 50 },
+    mystic: { spending_style: 'strategic', risk_tolerance: 50, financial_wisdom: 80 },
+    elementalist: { spending_style: 'moderate', risk_tolerance: 60, luxury_desire: 40 },
+    berserker: { spending_style: 'impulsive', risk_tolerance: 95, financial_wisdom: 10 },
+    scholar: { spending_style: 'conservative', risk_tolerance: 20, financial_wisdom: 95 },
+    detective: { spending_style: 'analytical', risk_tolerance: 45, financial_wisdom: 85 }
+  };
+
+  const base = defaultByArchetype[archetype] || defaultByArchetype.warrior;
+
+  return {
+    spending_style: specific?.spending_style || base.spending_style || 'moderate',
+    money_motivations: specific?.money_motivations || ['security', 'status'],
+    financial_wisdom: specific?.financial_wisdom || base.financial_wisdom || 50,
+    risk_tolerance: specific?.risk_tolerance || base.risk_tolerance || 50,
+    luxury_desire: specific?.luxury_desire || base.luxury_desire || 50,
+    generosity: specific?.generosity || base.generosity || 50,
+    financial_traumas: specific?.financial_traumas || [],
+    money_beliefs: specific?.money_beliefs || ['Money provides security', 'Save for the future']
+  };
+}
+
+// Backwards compatibility alias - Character now refers to static template data
+// For runtime character instances, use Contestant from apiClient.ts
+export type Character = CharacterTemplate;
+
+// ============================================================
+// Character utility functions DELETED
+// All functions that used characterTemplates have been removed:
+// - createCharacter()
+// - getCharacterById()
+// - getAllCharacters()
+// - getCharactersByArchetype()
+// - getCharactersByRarity()
+// - calculateCharacterPower()
+// - getCharacterUnlockRequirements()
+// - applyTrainingImprovements()
+//
+// Use backend API instead for all character data
+// ============================================================

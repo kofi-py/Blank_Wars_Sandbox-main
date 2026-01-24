@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Word Bubble Position Validator - Kitchen Table</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 12px;
+            padding: 30px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+        }
+
+        h1 {
+            text-align: center;
+            color: #333;
+            margin-bottom: 10px;
+        }
+
+        .subtitle {
+            text-align: center;
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+
+        .comparison {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+            margin-bottom: 30px;
+        }
+
+        .view {
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+
+        .view-header {
+            background: #f5f5f5;
+            padding: 15px;
+            font-weight: bold;
+            text-align: center;
+        }
+
+        .view-header.old {
+            background: #fee;
+            color: #c00;
+        }
+
+        .view-header.new {
+            background: #efe;
+            color: #0a0;
+        }
+
+        .stage {
+            position: relative;
+            width: 100%;
+            height: 600px;
+            background: linear-gradient(135deg, #ffeaa7 0%, #fdcb6e 100%);
+            border-bottom: 3px solid #d63031;
+        }
+
+        /* Grid overlay for reference */
+        .grid {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-image:
+                repeating-linear-gradient(0deg, rgba(0,0,0,0.05) 0px, rgba(0,0,0,0.05) 1px, transparent 1px, transparent 60px),
+                repeating-linear-gradient(90deg, rgba(0,0,0,0.05) 0px, rgba(0,0,0,0.05) 1px, transparent 1px, transparent 60px);
+            pointer-events: none;
+        }
+
+        .character {
+            position: absolute;
+            width: 80px;
+            height: 80px;
+            border-radius: 50%;
+            background: #2d3436;
+            border: 4px solid #00b894;
+            transform: translate(-50%, -50%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+            font-size: 12px;
+            text-align: center;
+            z-index: 10;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        }
+
+        .character-mouth {
+            position: absolute;
+            width: 6px;
+            height: 6px;
+            background: #ff7675;
+            border-radius: 50%;
+            top: 43%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+        }
+
+        .bubble {
+            position: absolute;
+            background: white;
+            border: 3px solid #2d3436;
+            border-radius: 16px;
+            padding: 12px 16px;
+            transform: translate(-50%, 0);
+            z-index: 5;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+            min-width: 120px;
+            max-width: 200px;
+        }
+
+        .bubble-name {
+            font-weight: bold;
+            font-size: 11px;
+            color: #666;
+            margin-bottom: 4px;
+        }
+
+        .bubble-text {
+            font-size: 12px;
+            color: #333;
+        }
+
+        .bubble-tail {
+            position: absolute;
+            bottom: -12px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 0;
+            height: 0;
+            border-left: 12px solid transparent;
+            border-right: 12px solid transparent;
+            border-top: 12px solid white;
+        }
+
+        .bubble-tail::before {
+            content: '';
+            position: absolute;
+            bottom: 3px;
+            left: -14px;
+            width: 0;
+            height: 0;
+            border-left: 14px solid transparent;
+            border-right: 14px solid transparent;
+            border-top: 14px solid #2d3436;
+        }
+
+        /* Bounding boxes for collision detection visualization */
+        .bbox {
+            position: absolute;
+            border: 2px dashed rgba(255, 0, 0, 0.5);
+            background: rgba(255, 0, 0, 0.1);
+            pointer-events: none;
+            z-index: 1;
+        }
+
+        .bbox.character {
+            border-color: rgba(0, 200, 0, 0.5);
+            background: rgba(0, 200, 0, 0.1);
+        }
+
+        .bbox.overlap {
+            border-color: rgba(255, 0, 0, 0.9);
+            background: rgba(255, 0, 0, 0.3);
+            border-width: 3px;
+            animation: pulse 1s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .legend {
+            display: flex;
+            gap: 20px;
+            justify-content: center;
+            margin-top: 30px;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 8px;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .legend-box {
+            width: 30px;
+            height: 20px;
+            border: 2px solid;
+            border-radius: 4px;
+        }
+
+        .stats {
+            margin-top: 20px;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 8px;
+        }
+
+        .stats h3 {
+            margin-bottom: 15px;
+            color: #333;
+        }
+
+        .stat-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+        }
+
+        .stat-item {
+            padding: 12px;
+            background: white;
+            border-radius: 6px;
+            border-left: 4px solid #0984e3;
+        }
+
+        .stat-item.error {
+            border-left-color: #d63031;
+        }
+
+        .stat-item.success {
+            border-left-color: #00b894;
+        }
+
+        .stat-label {
+            font-size: 12px;
+            color: #666;
+            margin-bottom: 4px;
+        }
+
+        .stat-value {
+            font-size: 18px;
+            font-weight: bold;
+            color: #2d3436;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎬 Word Bubble Position Validator</h1>
+        <p class="subtitle">Kitchen Table Context - Comic Book Best Practices Applied</p>
+
+        <div class="comparison">
+            <!-- OLD POSITIONS -->
+            <div class="view">
+                <div class="view-header old">❌ OLD POSITIONS (Before Fix)</div>
+                <div class="stage" id="stage-old">
+                    <div class="grid"></div>
+                </div>
+            </div>
+
+            <!-- NEW POSITIONS -->
+            <div class="view">
+                <div class="view-header new">✅ NEW POSITIONS (After Fix)</div>
+                <div class="stage" id="stage-new">
+                    <div class="grid"></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="legend">
+            <div class="legend-item">
+                <div class="legend-box" style="background: #2d3436; border-color: #00b894;"></div>
+                <span>Character</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-box" style="background: white; border-color: #2d3436;"></div>
+                <span>Speech Bubble</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-box" style="background: rgba(255,0,0,0.1); border-color: rgba(255,0,0,0.5); border-style: dashed;"></div>
+                <span>Bubble Bounding Box</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-box" style="background: rgba(0,200,0,0.1); border-color: rgba(0,200,0,0.5); border-style: dashed;"></div>
+                <span>Character Bounding Box</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-box" style="background: rgba(255,0,0,0.3); border-color: rgba(255,0,0,0.9); border-style: dashed;"></div>
+                <span>⚠️ Overlap (Critical Issue)</span>
+            </div>
+        </div>
+
+        <div class="stats">
+            <h3>📊 Collision Detection Results</h3>
+            <div class="stat-grid" id="stats"></div>
+        </div>
+    </div>
+
+    <script>
+        // Character data from analysis
+        const characters = {
+            'merlin': {
+                grid: 'D1',
+                charPos: { x: 10, y: 40 },
+                old: { x: 15, y: 20 },
+                new: { x: 20, y: 15 }
+            },
+            'achilles': {
+                grid: 'B4',
+                charPos: { x: 40, y: 20 },
+                old: { x: 50, y: 10 },
+                new: { x: 40, y: 35 }
+            },
+            'cleopatra': {
+                grid: 'C7',
+                charPos: { x: 70, y: 30 },
+                old: { x: 75, y: 20 },
+                new: { x: 70, y: 5 }
+            },
+            'joan': {
+                grid: 'H6',
+                charPos: { x: 60, y: 80 },
+                old: { x: 65, y: 45 },
+                new: { x: 60, y: 55 }
+            },
+            'dracula': {
+                grid: 'H2',
+                charPos: { x: 20, y: 80 },
+                old: { x: 25, y: 45 },
+                new: { x: 30, y: 55 }
+            }
+        };
+
+        const BUBBLE_WIDTH = 20; // percentage
+        const BUBBLE_HEIGHT = 10; // percentage
+        const CHAR_MARGIN = 8; // percentage
+
+        function checkOverlap(bubblePos, charPos) {
+            const bubbleBox = {
+                left: bubblePos.x - BUBBLE_WIDTH/2,
+                right: bubblePos.x + BUBBLE_WIDTH/2,
+                top: bubblePos.y,
+                bottom: bubblePos.y + BUBBLE_HEIGHT
+            };
+
+            const charBox = {
+                left: charPos.x - CHAR_MARGIN,
+                right: charPos.x + CHAR_MARGIN,
+                top: charPos.y - CHAR_MARGIN,
+                bottom: charPos.y + CHAR_MARGIN
+            };
+
+            return !(bubbleBox.right < charBox.left ||
+                    bubbleBox.left > charBox.right ||
+                    bubbleBox.bottom < charBox.top ||
+                    bubbleBox.top > charBox.bottom);
+        }
+
+        function renderStage(stageId, posType) {
+            const stage = document.getElementById(stageId);
+            let overlaps = 0;
+
+            for (const [charId, data] of Object.entries(characters)) {
+                const bubblePos = data[posType];
+                const charPos = data.charPos;
+                const hasOverlap = checkOverlap(bubblePos, charPos);
+
+                if (hasOverlap) overlaps++;
+
+                // Render character
+                const char = document.createElement('div');
+                char.className = 'character';
+                char.style.left = `${charPos.x}%`;
+                char.style.top = `${charPos.y}%`;
+                char.innerHTML = `
+                    ${charId.toUpperCase()}<br>
+                    <small>${data.grid}</small>
+                    <div class="character-mouth"></div>
+                `;
+                stage.appendChild(char);
+
+                // Character bounding box
+                const charBBox = document.createElement('div');
+                charBBox.className = 'bbox character';
+                charBBox.style.left = `${charPos.x - CHAR_MARGIN}%`;
+                charBBox.style.top = `${charPos.y - CHAR_MARGIN}%`;
+                charBBox.style.width = `${CHAR_MARGIN * 2}%`;
+                charBBox.style.height = `${CHAR_MARGIN * 2}%`;
+                stage.appendChild(charBBox);
+
+                // Render bubble
+                const bubble = document.createElement('div');
+                bubble.className = 'bubble';
+                bubble.style.left = `${bubblePos.x}%`;
+                bubble.style.top = `${bubblePos.y}%`;
+                bubble.innerHTML = `
+                    <div class="bubble-name">${charId}</div>
+                    <div class="bubble-text">Test message for ${charId}</div>
+                    <div class="bubble-tail"></div>
+                `;
+                stage.appendChild(bubble);
+
+                // Bubble bounding box
+                const bubbleBBox = document.createElement('div');
+                bubbleBBox.className = `bbox${hasOverlap ? ' overlap' : ''}`;
+                bubbleBBox.style.left = `${bubblePos.x - BUBBLE_WIDTH/2}%`;
+                bubbleBBox.style.top = `${bubblePos.y}%`;
+                bubbleBBox.style.width = `${BUBBLE_WIDTH}%`;
+                bubbleBBox.style.height = `${BUBBLE_HEIGHT}%`;
+                stage.appendChild(bubbleBBox);
+            }
+
+            return overlaps;
+        }
+
+        // Render both stages
+        const oldOverlaps = renderStage('stage-old', 'old');
+        const newOverlaps = renderStage('stage-new', 'new');
+
+        // Display stats
+        const stats = document.getElementById('stats');
+        stats.innerHTML = `
+            <div class="stat-item ${oldOverlaps > 0 ? 'error' : 'success'}">
+                <div class="stat-label">Old Positions - Overlaps</div>
+                <div class="stat-value">${oldOverlaps} ${oldOverlaps > 0 ? '❌' : '✅'}</div>
+            </div>
+            <div class="stat-item ${newOverlaps > 0 ? 'error' : 'success'}">
+                <div class="stat-label">New Positions - Overlaps</div>
+                <div class="stat-value">${newOverlaps} ${newOverlaps > 0 ? '❌' : '✅'}</div>
+            </div>
+            <div class="stat-item success">
+                <div class="stat-label">Issues Fixed</div>
+                <div class="stat-value">${oldOverlaps - newOverlaps} ✅</div>
+            </div>
+            <div class="stat-item ${newOverlaps === 0 ? 'success' : 'error'}">
+                <div class="stat-label">Status</div>
+                <div class="stat-value">${newOverlaps === 0 ? 'PASSED ✅' : 'FAILED ❌'}</div>
+            </div>
+        `;
+    </script>
+</body>
+</html>

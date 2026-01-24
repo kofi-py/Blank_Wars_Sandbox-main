@@ -1,0 +1,66 @@
+BULK CASE CONVERSION LOG
+================================================================================
+
+fetchBalance → fetch_balance
+  Files: 1, Replacements: 0
+
+fetchHistory → fetch_history
+  Files: 1, Replacements: 0
+
+purchaseTickets → purchase_tickets
+  Files: 1, Replacements: 0
+
+packageId → package_id
+  Files: 1, Replacements: 0
+
+baseGain → base_gain
+  Files: 1, Replacements: 1
+
+newLevel → new_level
+  Files: 1, Replacements: 2
+
+isBubbleMode → is_bubble_mode
+  Files: 1, Replacements: 0
+
+setIsBubbleMode → set_is_bubble_mode
+  Files: 1, Replacements: 0
+
+toggleChatMode → toggle_chat_mode
+  Files: 1, Replacements: 0
+
+containerDimensions → container_dimensions
+  Files: 1, Replacements: 0
+
+isMobile → is_mobile
+  Files: 1, Replacements: 0
+
+desktopProps → desktop_props
+  Files: 1, Replacements: 0
+
+synergiesCount → synergies_count
+  Files: 1, Replacements: 1
+
+tutorialState → tutorial_state
+  Files: 1, Replacements: 0
+
+startTutorial → start_tutorial
+  Files: 1, Replacements: 0
+
+nextStep → next_step
+  Files: 1, Replacements: 0
+
+prevStep → prev_step
+  Files: 1, Replacements: 0
+
+skipTutorial → skip_tutorial
+  Files: 1, Replacements: 0
+
+resetTutorial → reset_tutorial
+  Files: 1, Replacements: 0
+
+addMessage → add_message
+  Files: 1, Replacements: 0
+
+activeBubbleCount → active_bubble_count
+  Files: 1, Replacements: 0
+

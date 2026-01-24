@@ -1,0 +1,47 @@
+digraph subsystems {
+    rankdir=TB
+    node [shape=box style=filled fontname="Arial"]
+    
+    // Root/Core
+    Users [fillcolor="#FFD700" style="filled,bold" penwidth=3 label="USERS\n(Coach Accounts)\n15 outgoing FKs"]
+    Characters [fillcolor="#FFB347" style="filled,bold" penwidth=2 label="CHARACTERS\n(AI Templates)\n4 outgoing FKs"]
+    
+    // Main Hubs
+    UserChars [fillcolor="#87CEEB" style="filled,bold" penwidth=3 label="USER_CHARACTERS\n(AI Roster)\n16 incoming + 2 outgoing"]
+    
+    // Subsystems
+    BattleSystem [fillcolor="#98D8C8" label="BATTLE SYSTEM\n(battles, battle_queue)"]
+    ChallengeSystem [fillcolor="#98D8C8" label="CHALLENGE SYSTEM\n(7 tables:\nchallengetemplates,\nactive_challenges,\nparticipants, results,\nleaderboard, alliances,\nrewards)"]
+    HQSystem [fillcolor="#F0E68C" label="HQ SYSTEM\n(user_headquarters,\nrooms, healing)"]
+    ProgSystem [fillcolor="#DDA0DD" label="PROGRESSION\n(skills, xp, abilities,\ntraining)"]
+    EconomySystem [fillcolor="#90EE90" label="ECONOMY\n(currency, equipment,\nitems, packs, purchases)"]
+    ChatSystem [fillcolor="#FFB6C1" label="CHAT & SOCIAL\n(messages, sessions)"]
+    EventMemory [fillcolor="#FFA07A" label="EVENTS & MEMORY\n(game_events,\ncharacter_memories)"]
+    Financial [fillcolor="#20B2AA" label="FINANCIAL SYSTEM\n(decisions, personality)"]
+    
+    // Main flow
+    Users -> UserChars [label="owns" penwidth=3 color="#FF0000"]
+    Characters -> UserChars [label="template" penwidth=3 color="#FF6B00"]
+    
+    UserChars -> BattleSystem [penwidth=2 color="#4ECDC4"]
+    UserChars -> ChallengeSystem [penwidth=2 color="#4ECDC4"]
+    UserChars -> ProgSystem [penwidth=2 color="#4ECDC4"]
+    UserChars -> ChatSystem [penwidth=2 color="#4ECDC4"]
+    UserChars -> Financial [penwidth=2 color="#4ECDC4"]
+    
+    Users -> BattleSystem [penwidth=2 color="#FF6B6B"]
+    Users -> ChallengeSystem [penwidth=2 color="#FF6B6B"]
+    Users -> HQSystem [penwidth=2 color="#FF6B6B"]
+    Users -> EconomySystem [penwidth=2 color="#FF6B6B"]
+    Users -> ChatSystem [penwidth=2 color="#FF6B6B"]
+    
+    Characters -> EventMemory [style=dashed label="ref (no FK)"]
+    Characters -> ChallengeSystem [label="packs"]
+    
+    // Isolated
+    EventMemory [fillcolor="#FFE4E1"]
+    
+    // Legend
+    {rank=sink; Legend}
+    Legend [shape=note fillcolor="#FFFACD" label="LEGEND:\nGold = Root (Users)\nOrange = Root (Characters)\nBlue = Hub (User Characters)\nGreen/Purple/etc = Subsystems\nDashed = No FK constraint"]
+}

@@ -1,0 +1,128 @@
+digraph blankwars_schema {
+    // Graph settings for better layout
+    graph [
+        rankdir=TB
+        splines=ortho
+        nodesep=0.5
+        ranksep=1.5
+        concentrate=true
+        bgcolor=white
+    ]
+    
+    // Default node style
+    node [
+        shape=box
+        style=filled
+        fillcolor=lightgray
+        fontname="Arial"
+        fontsize=10
+    ]
+    
+    // Default edge style  
+    edge [
+        color=gray40
+        arrowsize=0.7
+    ]
+    
+    "active_challenges" [fillcolor="#87CEEB" shape=box style="filled,bold" penwidth=2];
+    "battles" [fillcolor="#87CEEB" shape=box style="filled,bold" penwidth=2];
+    "card_packs" [fillcolor="#FFFFFF"];
+    "challenge_alliances" [fillcolor="#FFFFFF"];
+    "challenge_leaderboard" [fillcolor="#FFFFFF"];
+    "challenge_participants" [fillcolor="#FFFFFF"];
+    "challenge_results" [fillcolor="#FFFFFF"];
+    "challenge_rewards" [fillcolor="#FFFFFF"];
+    "challenge_templates" [fillcolor="#FFD700" shape=box style="filled,bold" penwidth=2];
+    "character_abilities" [fillcolor="#FFFFFF"];
+    "character_experience_log" [fillcolor="#FFFFFF"];
+    "character_healing_sessions" [fillcolor="#FFFFFF"];
+    "character_living_context" [fillcolor="#FFFFFF"];
+    "character_memories" [fillcolor="#FFB6C1"];
+    "character_progression" [fillcolor="#FFFFFF"];
+    "character_skills" [fillcolor="#FFFFFF"];
+    "characters" [fillcolor="#FFD700" shape=box style="filled,bold" penwidth=2];
+    "chat_messages" [fillcolor="#FFFFFF"];
+    "chat_sessions" [fillcolor="#FFFFFF"];
+    "claimable_pack_contents" [fillcolor="#FFFFFF"];
+    "claimable_packs" [fillcolor="#FFFFFF"];
+    "coach_progression" [fillcolor="#FFFFFF"];
+    "coach_skills" [fillcolor="#FFFFFF"];
+    "coach_xp_events" [fillcolor="#FFFFFF"];
+    "cron_logs" [fillcolor="#E0E0E0" fontcolor="#666666"];
+    "events" [fillcolor="#FFFFFF"];
+    "facts" [fillcolor="#FFFFFF"];
+    "financial_decisions" [fillcolor="#FFFFFF"];
+    "game_events" [fillcolor="#FFD700" shape=box style="filled,bold" penwidth=2];
+    "headquarters_rooms" [fillcolor="#FFFFFF"];
+    "healing_facilities" [fillcolor="#FFD700" shape=box style="filled,bold" penwidth=2];
+    "memory_entries" [fillcolor="#FFFFFF"];
+    "migration_log" [fillcolor="#E0E0E0" fontcolor="#666666"];
+    "migration_meta" [fillcolor="#E0E0E0" fontcolor="#666666"];
+    "purchases" [fillcolor="#FFFFFF"];
+    "scene_triggers" [fillcolor="#FFFFFF"];
+    "session_state" [fillcolor="#FFFFFF"];
+    "state_digest" [fillcolor="#FFFFFF"];
+    "team_context" [fillcolor="#FFFFFF"];
+    "tmp_user_characters_backup" [fillcolor="#E0E0E0" fontcolor="#666666"];
+    "user_characters" [fillcolor="#87CEEB" shape=box style="filled,bold" penwidth=2];
+    "user_currency" [fillcolor="#FFFFFF"];
+    "user_daily_stats" [fillcolor="#FFFFFF"];
+    "user_equipment" [fillcolor="#FFFFFF"];
+    "user_headquarters" [fillcolor="#FFFFFF"];
+    "user_items" [fillcolor="#FFFFFF"];
+    "users" [fillcolor="#FFD700" shape=box style="filled,bold" penwidth=2];
+
+    // Relationships
+    "active_challenges" -> "users" [label="user_id" color="#333333" penwidth=1.5];
+    "active_challenges" -> "challenge_templates" [label="challenge_template_id" color="#333333" penwidth=1.5];
+    "battles" -> "users" [label="user1_id" color="#333333" penwidth=1.5];
+    "battles" -> "users" [label="user2_id" color="#333333" penwidth=1.5];
+    "battles" -> "user_characters" [label="user_character1_id"];
+    "battles" -> "user_characters" [label="user_character2_id"];
+    "battles" -> "users" [label="winner_id" color="#333333" penwidth=1.5];
+    "challenge_alliances" -> "user_characters" [label="leader_character_id"];
+    "challenge_alliances" -> "active_challenges" [label="active_challenge_id"];
+    "challenge_leaderboard" -> "user_characters" [label="user_character_id"];
+    "challenge_participants" -> "active_challenges" [label="active_challenge_id"];
+    "challenge_participants" -> "user_characters" [label="user_character_id"];
+    "challenge_results" -> "user_characters" [label="winner_character_id"];
+    "challenge_results" -> "user_characters" [label="third_place_character_id"];
+    "challenge_results" -> "user_characters" [label="second_place_character_id"];
+    "challenge_results" -> "challenge_templates" [label="challenge_template_id" color="#333333" penwidth=1.5];
+    "challenge_results" -> "active_challenges" [label="active_challenge_id"];
+    "challenge_rewards" -> "challenge_templates" [label="challenge_template_id" color="#333333" penwidth=1.5];
+    "character_abilities" -> "user_characters" [label="character_id"];
+    "character_experience_log" -> "user_characters" [label="character_id"];
+    "character_healing_sessions" -> "user_characters" [label="character_id"];
+    "character_healing_sessions" -> "healing_facilities" [label="facility_id" color="#333333" penwidth=1.5];
+    "character_living_context" -> "characters" [label="character_id" color="#333333" penwidth=1.5];
+    "character_memories" -> "game_events" [label="event_id" color="#333333" penwidth=1.5];
+    "character_progression" -> "user_characters" [label="character_id"];
+    "character_skills" -> "user_characters" [label="character_id"];
+    "chat_messages" -> "battles" [label="battle_id"];
+    "chat_messages" -> "users" [label="user_id" color="#333333" penwidth=1.5];
+    "chat_messages" -> "user_characters" [label="character_id"];
+    "claimable_pack_contents" -> "claimable_packs" [label="claimable_pack_id"];
+    "claimable_pack_contents" -> "characters" [label="character_id" color="#333333" penwidth=1.5];
+    "claimable_packs" -> "users" [label="claimed_by_user_id" color="#333333" penwidth=1.5];
+    "coach_progression" -> "users" [label="user_id" color="#333333" penwidth=1.5];
+    "coach_skills" -> "users" [label="user_id" color="#333333" penwidth=1.5];
+    "coach_xp_events" -> "battles" [label="battle_id"];
+    "coach_xp_events" -> "user_characters" [label="character_id"];
+    "coach_xp_events" -> "users" [label="user_id" color="#333333" penwidth=1.5];
+    "financial_decisions" -> "user_characters" [label="user_character_id"];
+    "headquarters_rooms" -> "user_headquarters" [label="headquarters_id"];
+    "purchases" -> "users" [label="user_id" color="#333333" penwidth=1.5];
+    "team_context" -> "characters" [label="master_bed_character_id" color="#333333" penwidth=1.5];
+    "user_characters" -> "characters" [label="character_id" color="#333333" penwidth=1.5];
+    "user_characters" -> "users" [label="user_id" color="#333333" penwidth=1.5];
+    "user_currency" -> "users" [label="user_id" color="#333333" penwidth=1.5];
+    "user_equipment" -> "users" [label="user_id" color="#333333" penwidth=1.5];
+    "user_headquarters" -> "users" [label="user_id" color="#333333" penwidth=1.5];
+    "user_items" -> "items" [label="item_id"];
+    "user_items" -> "users" [label="user_id" color="#333333" penwidth=1.5];
+
+    // Layout hints
+    {rank=source; "users"; "characters"; "challenge_templates"; "healing_facilities"; "game_events"}
+    {rank=same; "user_characters"; "battles"; "active_challenges"}
+}

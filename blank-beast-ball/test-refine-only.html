@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Refined Model (No Rigging)</title>
+    <style>
+        body { margin: 0; }
+        canvas { display: block; }
+        #info {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: white;
+            background: rgba(0,0,0,0.7);
+            padding: 10px;
+            font-family: monospace;
+        }
+    </style>
+</head>
+<body>
+    <div id="info">Loading refined model (no rigging)...</div>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/loaders/GLTFLoader.js"></script>
+    <script>
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x87CEEB);
+
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+
+        const renderer = new THREE.WebGLRenderer();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+
+        // Add grid helper
+        const gridHelper = new THREE.GridHelper(20, 20);
+        scene.add(gridHelper);
+
+        // Add axes helper
+        const axesHelper = new THREE.AxesHelper(5);
+        scene.add(axesHelper);
+
+        // Add lighting
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+        scene.add(ambientLight);
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+        directionalLight.position.set(5, 10, 5);
+        scene.add(directionalLight);
+
+        const loader = new THREE.GLTFLoader();
+        let player;
+        let cameraAngle = 0;
+        const keys = {};
+
+        // Keyboard controls
+        document.addEventListener('keydown', (e) => {
+            keys[e.key.toLowerCase()] = true;
+        });
+        document.addEventListener('keyup', (e) => {
+            keys[e.key.toLowerCase()] = false;
+        });
+
+        // Load refined model (before rigging/animation)
+        loader.load('models/achilles_refine_no_rig.glb', (gltf) => {
+            const model = gltf.scene;
+
+            // Get original bounding box
+            const box = new THREE.Box3().setFromObject(model);
+            const size = box.getSize(new THREE.Vector3());
+            const center = box.getCenter(new THREE.Vector3());
+
+            console.log('Original size:', size);
+            console.log('Original center:', center);
+
+            // Use 5x scale to match camera distance testing
+            const scaleFactor = 5;
+            model.scale.set(scaleFactor, scaleFactor, scaleFactor);
+
+            // Check size after scaling
+            const boxScaled = new THREE.Box3().setFromObject(model);
+            const sizeScaled = boxScaled.getSize(new THREE.Vector3());
+            const centerScaled = boxScaled.getCenter(new THREE.Vector3());
+
+            console.log('Scaled size:', sizeScaled);
+            console.log('Scaled center:', centerScaled);
+
+            // Position at origin - raise up so feet are on floor, not halfway through
+            // Model height after scaling is ~0.09, so raise by half that
+            model.position.set(0, 0.045, 0);
+            model.rotation.y = Math.PI; // Face away from camera
+
+            scene.add(model);
+            player = model;
+
+            document.getElementById('info').innerHTML = `
+                <strong>Refined Model (No Rigging) - Testing Textures</strong><br>
+                Original: ${size.x.toFixed(3)} x ${size.y.toFixed(3)} x ${size.z.toFixed(3)}<br>
+                Scaled (${scaleFactor}x): ${sizeScaled.x.toFixed(3)} x ${sizeScaled.y.toFixed(3)} x ${sizeScaled.z.toFixed(3)}<br>
+                <br>
+                Controls: Q/E = Rotate Camera<br>
+                <br>
+                If you see COLORS (bronze, red, skin), textures work!<br>
+                If you see BLACK/GRAY, textures are missing from GLB.
+            `;
+        }, undefined, (error) => {
+            console.error('Error loading model:', error);
+            document.getElementById('info').innerHTML = 'Error loading model: ' + error.message;
+        });
+
+        // Position camera to match game position
+        camera.position.set(0, 8, 15);
+        camera.lookAt(0, 1, 0);
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            // Handle camera rotation with Q/E
+            if (keys['q']) {
+                cameraAngle -= 0.02;
+            }
+            if (keys['e']) {
+                cameraAngle += 0.02;
+            }
+
+            // Update camera to orbit around player
+            if (player) {
+                const cameraDistance = 15;
+                const cameraHeight = 8;
+                camera.position.x = player.position.x + Math.sin(cameraAngle) * cameraDistance;
+                camera.position.y = player.position.y + cameraHeight;
+                camera.position.z = player.position.z + Math.cos(cameraAngle) * cameraDistance;
+                camera.lookAt(player.position.x, player.position.y + 0.5, player.position.z);
+            }
+
+            renderer.render(scene, camera);
+        }
+        animate();
+    </script>
+</body>
+</html>

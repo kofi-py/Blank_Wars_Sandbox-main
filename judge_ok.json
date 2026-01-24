@@ -1,0 +1,8 @@
+{
+  "agentKey": "king_solomon",
+  "character": "king_solomon", 
+  "usercharId": "userchar_test_genghis_khan",
+  "chatType": "therapy_evaluation",
+  "meta": {"domain":"evaluation","usercharId":"userchar_test_genghis_khan","traceId":"manual"},
+  "messages": [{"role":"user","content":"Evaluate the last 3 exchanges."}]
+}

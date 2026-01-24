@@ -1,0 +1,635 @@
+BULK CAMELCASE → SNAKE_CASE CONVERSION MAP
+================================================================================
+
+className → class_name
+  Occurrences: 46
+  Files: src/components/RealEstateAgentChat.tsx, src/components/TradingCard.tsx, src/components/EquipmentManager.tsx, src/components/TeamBuilder.tsx, src/components/EquipmentInventory.tsx ... and 7 more
+
+onClick → on_click
+  Occurrences: 18
+  Files: src/components/RealEstateAgentChat.tsx, src/components/EquipmentManager.tsx, src/components/TeamBuilder.tsx, src/components/EquipmentInventory.tsx, src/components/PackOpening.tsx ... and 3 more
+
+whileHover → while_hover
+  Occurrences: 15
+  Files: src/components/RealEstateAgentChat.tsx, src/components/EquipmentManager.tsx, src/components/TeamBuilder.tsx, src/components/EquipmentInventory.tsx, src/components/PackOpening.tsx ... and 3 more
+
+ExecutedAction → executed_action
+  Occurrences: 11
+  Files: src/systems/__tests__/physicalBattleEngine.test.ts
+
+whileTap → while_tap
+  Occurrences: 7
+  Files: src/components/PackOpening.tsx, src/components/RealEstateAgentChat.tsx, src/components/TeamChatPanel.tsx, src/components/EquipmentInventory.tsx
+
+currentTickets → current_tickets
+  Occurrences: 4
+  Files: src/components/ChatWithTickets.tsx, src/components/TicketCounter.tsx, src/components/TicketConfirmationModal.tsx
+
+boxShadow → box_shadow
+  Occurrences: 4
+  Files: src/components/PackOpening.tsx, src/components/TradingCard.tsx
+
+BattleState → battle_state
+  Occurrences: 4
+  Files: src/systems/__tests__/physicalBattleEngine.test.ts
+
+characterArchetype → character_archetype
+  Occurrences: 3
+  Files: src/components/EquipmentManager.tsx, src/components/MainTabSystem.tsx, src/components/CombinedEquipmentManager.tsx
+
+onEquip → on_equip
+  Occurrences: 3
+  Files: src/components/MainTabSystem.tsx, src/components/CombinedEquipmentManager.tsx, src/components/EquipmentInventory.tsx
+
+adherenceScore → adherence_score
+  Occurrences: 3
+  Files: src/components/EquipmentManager.tsx, src/components/MainTabSystem.tsx, src/components/CombinedEquipmentManager.tsx
+
+showComparison → show_comparison
+  Occurrences: 3
+  Files: src/components/EquipmentDetailsModal.tsx, src/components/EquipmentInventory.tsx, src/components/EquipmentDetailsModalDB.tsx
+
+setGlobalSelectedCharacterId → set_global_selected_character_id
+  Occurrences: 3
+  Files: src/components/MainTabSystem.tsx, src/components/TrainingGrounds_v_?.tsx, src/components/InventoryManagerWrapper.tsx
+
+userProfile → user_profile
+  Occurrences: 3
+  Files: src/components/Lobby.tsx, src/components/UserProfile.tsx, src/hooks/useLobby.ts
+
+characterPoints → character_points
+  Occurrences: 3
+  Files: src/components/SpellManager.tsx, src/components/PowerPointsDisplay.tsx, src/components/PowerManager.tsx
+
+GameEvent → game_event
+  Occurrences: 3
+  Files: src/components/TeamDashboard.tsx
+
+rotateY → rotate_y
+  Occurrences: 3
+  Files: src/components/TradingCard.tsx
+
+potentialDeviations → potential_deviations
+  Occurrences: 3
+  Files: src/data/characterPsychology.ts
+
+BattleContext → battle_context
+  Occurrences: 3
+  Files: src/test/testAdherenceSystem.ts, src/hooks/useBattleChat.ts
+
+hexSize → hex_size
+  Occurrences: 2
+  Files: src/components/battle/HexGrid.tsx, src/components/battle/CharacterToken.tsx
+
+onClose → on_close
+  Occurrences: 2
+  Files: src/components/ChatWithTickets.tsx, src/components/EquipmentInventory.tsx
+
+currentUserGuild → current_user_guild
+  Occurrences: 2
+  Files: src/components/Clubhouse.tsx, src/components/MainTabSystem.tsx
+
+onUnequip → on_unequip
+  Occurrences: 2
+  Files: src/components/MainTabSystem.tsx, src/components/CombinedEquipmentManager.tsx
+
+currentMatch → current_match
+  Occurrences: 2
+  Files: src/components/enhanced/TeamChatPanelWithBubbles.tsx, src/components/TeamChatPanel.tsx
+
+bubbleSystemProps → bubble_system_props
+  Occurrences: 2
+  Files: src/components/examples/BubbleIntegrationExample.tsx
+
+unlockedAchievements → unlocked_achievements
+  Occurrences: 2
+  Files: src/components/MainTabSystem.tsx, src/components/FacilitiesManager.tsx
+
+ownedFacilities → owned_facilities
+  Occurrences: 2
+  Files: src/components/MainTabSystem.tsx, src/components/FacilitiesManager.tsx
+
+globalSelectedCharacterId → global_selected_character_id
+  Occurrences: 2
+  Files: src/components/TrainingGrounds_v_?.tsx, src/components/InventoryManagerWrapper.tsx
+
+facilityId → facility_id
+  Occurrences: 2
+  Files: src/components/MainTabSystem.tsx
+
+GameEvent[] → game_event[]
+  Occurrences: 2
+  Files: src/components/TeamDashboard.tsx
+
+FinancialPersonality → financial_personality
+  Occurrences: 2
+  Files: src/components/TeamDashboard.tsx
+
+coachTrust → coach_trust
+  Occurrences: 2
+  Files: src/components/TeamDashboard.tsx
+
+containerWidth → container_width
+  Occurrences: 2
+  Files: src/components/WordBubbleSystem.tsx, src/components/TestBubbleChat.tsx
+
+containerHeight → container_height
+  Occurrences: 2
+  Files: src/components/WordBubbleSystem.tsx, src/components/TestBubbleChat.tsx
+
+(message: TherapyMessage) => void → (message: _therapy_message) => void
+  Occurrences: 2
+  Files: src/components/TherapyModule.tsx
+
+TherapyEventData → therapy_event_data
+  Occurrences: 2
+  Files: src/services/eventSystemTest.ts, src/components/TherapyModule.tsx
+
+Map<unknown, unknown> → map<unknown, unknown>
+  Occurrences: 2
+  Files: src/hooks/useCoachingSystem.ts
+
+Map<string, any> → map<string, any>
+  Occurrences: 2
+  Files: src/hooks/useCoachingSystem.ts
+
+PsychologyState → psychology_state
+  Occurrences: 2
+  Files: src/hooks/usePsychologySystem.ts, src/systems/physicalBattleEngine.ts
+
+DeviationEvent → deviation_event
+  Occurrences: 2
+  Files: src/hooks/usePsychologySystem.ts, src/systems/physicalBattleEngine.ts
+
+Error → error
+  Occurrences: 2
+  Files: src/services/audioService.ts
+
+spiralRisk → spiral_risk
+  Occurrences: 2
+  Files: src/services/spiralPreventionService.ts
+
+isUserTeam → is_user_team
+  Occurrences: 1
+  Files: src/components/battle/CharacterToken.tsx
+
+timeLimit → time_limit
+  Occurrences: 1
+  Files: src/components/battle/CoachingTimeoutModal.tsx
+
+isCharacterInjured → is_character_injured
+  Occurrences: 1
+  Files: src/components/battle/CoachingTimeoutModal.tsx
+
+isTeamLosing → is_team_losing
+  Occurrences: 1
+  Files: src/components/battle/CoachingTimeoutModal.tsx
+
+equippedPowers → equipped_powers
+  Occurrences: 1
+  Files: src/components/battle/HexBattleArena.tsx
+
+equippedSpells → equipped_spells
+  Occurrences: 1
+  Files: src/components/battle/HexBattleArena.tsx
+
+powerCooldowns → power_cooldowns
+  Occurrences: 1
+  Files: src/components/battle/HexBattleArena.tsx
+
+spellCooldowns → spell_cooldowns
+  Occurrences: 1
+  Files: src/components/battle/HexBattleArena.tsx
+
+selectedHex → selected_hex
+  Occurrences: 1
+  Files: src/components/battle/HexGrid.tsx
+
+hoveredHex → hovered_hex
+  Occurrences: 1
+  Files: src/components/battle/HexGrid.tsx
+
+lineWidth → line_width
+  Occurrences: 1
+  Files: src/components/battle/HexGrid.tsx
+
+fighter1Id → fighter1_id
+  Occurrences: 1
+  Files: src/components/BattleImageTester.tsx
+
+fighter2Id → fighter2_id
+  Occurrences: 1
+  Files: src/components/BattleImageTester.tsx
+
+isAnimating → is_animating
+  Occurrences: 1
+  Files: src/components/BattleImageTester.tsx
+
+animationType → animation_type
+  Occurrences: 1
+  Files: src/components/BattleImageTester.tsx
+
+onAnimationComplete → on_animation_complete
+  Occurrences: 1
+  Files: src/components/BattleImageTester.tsx
+
+onRoundComplete → on_round_complete
+  Occurrences: 1
+  Files: src/components/BattleImageTester.tsx
+
+occupiedSlots → occupied_slots
+  Occurrences: 1
+  Files: src/components/BedComponent.tsx
+
+showDetails → show_details
+  Occurrences: 1
+  Files: src/components/BedComponent.tsx
+
+playerCurrency → player_currency
+  Occurrences: 1
+  Files: src/components/CardPackOpening.tsx
+
+userCharacters → user_characters
+  Occurrences: 1
+  Files: src/components/CharacterEchoManager.tsx
+
+activeBonuses → active_bonuses
+  Occurrences: 1
+  Files: src/components/CharacterLevelManager.tsx
+
+isCompact → is_compact
+  Occurrences: 1
+  Files: src/components/CharacterLevelManager.tsx
+
+pendingAllocations → pending_allocations
+  Occurrences: 1
+  Files: src/components/CharacterLevelUpChat.tsx
+
+currentLevel → current_level
+  Occurrences: 1
+  Files: src/components/CharacterProgression.tsx
+
+currentXP → current_xp
+  Occurrences: 1
+  Files: src/components/CharacterProgression.tsx
+
+updateProfile → update_profile
+  Occurrences: 1
+  Files: src/components/CharacterSlotUpgrade.tsx
+
+sequenceNumber → sequence_number
+  Occurrences: 1
+  Files: src/components/ChatTheater3D.tsx
+
+hasTickets → has_tickets
+  Occurrences: 1
+  Files: src/components/ChatWithTickets.tsx
+
+onConfirm → on_confirm
+  Occurrences: 1
+  Files: src/components/ChatWithTickets.tsx
+
+coachingType → coaching_type
+  Occurrences: 1
+  Files: src/components/ChatWithTickets.tsx
+
+isTimeoutActive → is_timeout_active
+  Occurrences: 1
+  Files: src/components/CoachingInterface.tsx
+
+timeRemaining → time_remaining
+  Occurrences: 1
+  Files: src/components/CoachingInterface.tsx
+
+skillReward → skill_reward
+  Occurrences: 1
+  Files: src/components/CombatSkillProgression.tsx
+
+playerStats → player_stats
+  Occurrences: 1
+  Files: src/components/CompetitiveMatchmaking.tsx
+
+findMatch → find_match
+  Occurrences: 1
+  Files: src/components/CompetitiveMatchmaking.tsx
+
+availableConflicts → available_conflicts
+  Occurrences: 1
+  Files: src/components/ConflictGuidancePanel.tsx
+
+backgroundColor → background_color
+  Occurrences: 1
+  Files: src/components/EquipmentInventory.tsx
+
+prefetchCharacter → prefetch_character
+  Occurrences: 1
+  Files: src/components/EquipmentSystemTester.tsx
+
+clearAllBubbles → clear_all_bubbles
+  Occurrences: 1
+  Files: src/components/examples/BubbleIntegrationExample.tsx
+
+currentUserProfile → current_user_profile
+  Occurrences: 1
+  Files: src/components/FriendList.tsx
+
+showLabel → show_label
+  Occurrences: 1
+  Files: src/components/GameplanTracker.tsx
+
+updateInterval → update_interval
+  Occurrences: 1
+  Files: src/components/GameplanTracker.tsx
+
+initialInventory → initial_inventory
+  Occurrences: 1
+  Files: src/components/InventoryManager.tsx
+
+newItem → new_item
+  Occurrences: 1
+  Files: src/components/InventoryManager.tsx
+
+isAuthenticated → is_authenticated
+  Occurrences: 1
+  Files: src/components/LogoutButton.tsx
+
+SetStateAction<MailMessage[]> → set_state_action<_mail_message[]>
+  Occurrences: 1
+  Files: src/components/Mailbox.tsx
+
+currentUserName → current_user_name
+  Occurrences: 1
+  Files: src/components/MainTabSystem.tsx
+
+currentUserAvatar → current_user_avatar
+  Occurrences: 1
+  Files: src/components/MainTabSystem.tsx
+
+currentUserLevel → current_user_level
+  Occurrences: 1
+  Files: src/components/MainTabSystem.tsx
+
+onPurchaseFacility → on_purchase_facility
+  Occurrences: 1
+  Files: src/components/MainTabSystem.tsx
+
+onUpgradeFacility → on_upgrade_facility
+  Occurrences: 1
+  Files: src/components/MainTabSystem.tsx
+
+transformStyle → transform_style
+  Occurrences: 1
+  Files: src/components/PackOpening.tsx
+
+showOnboarding → show_onboarding
+  Occurrences: 1
+  Files: src/components/PostRegistrationFlow.tsx
+
+setShowOnboarding → set_show_onboarding
+  Occurrences: 1
+  Files: src/components/PostRegistrationFlow.tsx
+
+Character[] → character[]
+  Occurrences: 1
+  Files: src/components/PostRegistrationFlow.tsx
+
+SetStateAction<TeamCharacter[]> → set_state_action<_team_character[]>
+  Occurrences: 1
+  Files: src/components/PostRegistrationFlow.tsx
+
+showDetailed → show_detailed
+  Occurrences: 1
+  Files: src/components/RelationshipDisplay.tsx
+
+savedTeams → saved_teams
+  Occurrences: 1
+  Files: src/components/TeamBuilder.tsx
+
+EventFilter → event_filter
+  Occurrences: 1
+  Files: src/components/TeamDashboard.tsx
+
+SetStateAction<GameEvent[]> → set_state_action<_game_event[]>
+  Occurrences: 1
+  Files: src/components/TeamDashboard.tsx
+
+initialTeamIds → initial_team_ids
+  Occurrences: 1
+  Files: src/components/TeamRoster.tsx
+
+sceneContext → scene_context
+  Occurrences: 1
+  Files: src/components/TestBubbleChat.tsx
+
+gameState → game_state
+  Occurrences: 1
+  Files: src/components/TherapyGameUI.tsx
+
+getTherapistStyles → get_therapist_styles
+  Occurrences: 1
+  Files: src/components/TherapyModule.tsx
+
+Character → character
+  Occurrences: 1
+  Files: src/components/TrainingGrounds.tsx
+
+totalSteps → total_steps
+  Occurrences: 1
+  Files: src/components/Tutorial.tsx
+
+defaultSection → default_section
+  Occurrences: 1
+  Files: src/components/TutorialSystem.tsx
+
+spoutPosition → spout_position
+  Occurrences: 1
+  Files: src/components/WordBubbleSystem.tsx
+
+rankUp → rank_up
+  Occurrences: 1
+  Files: src/data/abilities.ts
+
+nextTier → next_tier
+  Occurrences: 1
+  Files: src/data/characterProgression.ts
+
+totalExperience → total_experience
+  Occurrences: 1
+  Files: src/data/combatSkillProgression.ts
+
+expectedMatchDifficulty → expected_match_difficulty
+  Occurrences: 1
+  Files: src/data/competitiveMatchmaking.ts
+
+stationId → station_id
+  Occurrences: 1
+  Files: src/data/craftingSystem.ts
+
+runEquipmentIntegrationTest → run_equipment_integration_test
+  Occurrences: 1
+  Files: src/data/equipmentSystemIndex.ts
+
+generateEquipmentReport → generate_equipment_report
+  Occurrences: 1
+  Files: src/data/equipmentSystemIndex.ts
+
+getCharacterWeaponProgression → get_character_weapon_progression
+  Occurrences: 1
+  Files: src/data/equipmentSystemIndex.ts
+
+updatedCharacter → updated_character
+  Occurrences: 1
+  Files: src/data/experience.ts
+
+prerequisiteFacilities → prerequisite_facilities
+  Occurrences: 1
+  Files: src/data/facilities.ts
+
+sortPreference → sort_preference
+  Occurrences: 1
+  Files: src/data/inventory.ts
+
+PromptContext → prompt_context
+  Occurrences: 1
+  Files: src/data/kitchenChatService.ts
+
+TherapyReward[] → therapy_reward[]
+  Occurrences: 1
+  Files: src/data/therapyChatService.ts
+
+wsSocket → ws_socket
+  Occurrences: 1
+  Files: src/hooks/useBattleChat.ts
+
+announceBattleCry → announce_battle_cry
+  Occurrences: 1
+  Files: src/hooks/useBattleCommunication.ts
+
+getEventsByCharacter → get_events_by_character
+  Occurrences: 1
+  Files: src/hooks/useBattleRewards.ts
+
+executeAbility → execute_ability
+  Occurrences: 1
+  Files: src/hooks/usePsychologySystem.ts
+
+headquartersEffects → headquarters_effects
+  Occurrences: 1
+  Files: src/hooks/usePsychologySystem.ts
+
+StabilityFactors → stability_factors
+  Occurrences: 1
+  Files: src/hooks/usePsychologySystem.ts
+
+loopEnd → loop_end
+  Occurrences: 1
+  Files: src/services/audioService.ts
+
+loopStart → loop_start
+  Occurrences: 1
+  Files: src/services/audioService.ts
+
+playbackRate → playback_rate
+  Occurrences: 1
+  Files: src/services/audioService.ts
+
+Function → function
+  Occurrences: 1
+  Files: src/services/bubbleMessageRouter.ts
+
+getCharacter → get_character
+  Occurrences: 1
+  Files: src/services/characterHealthService.ts
+
+messageId → message_id
+  Occurrences: 1
+  Files: src/services/chatAdapter.ts
+
+{ id: number; type: string; content: any; timestamp: Date; }[] → { id: number; type: string; content: any; timestamp: _date; }[]
+  Occurrences: 1
+  Files: src/services/confessionalService.ts
+
+ConfessionalMessage[] → confessional_message[]
+  Occurrences: 1
+  Files: src/services/confessionalService.ts
+
+triggerReason → trigger_reason
+  Occurrences: 1
+  Files: src/services/ConflictDatabaseService.ts
+
+amountInvolved → amount_involved
+  Occurrences: 1
+  Files: src/services/eventContextService.ts
+
+trustImpact → trust_impact
+  Occurrences: 1
+  Files: src/services/eventContextService.ts
+
+ContextConfig → context_config
+  Occurrences: 1
+  Files: src/services/eventSystemTest.ts
+
+totalStress → total_stress
+  Occurrences: 1
+  Files: src/services/financialRoomMoodService.ts
+
+currentHappiness → current_happiness
+  Occurrences: 1
+  Files: src/services/financialRoomMoodService.ts
+
+activePurchases → active_purchases
+  Occurrences: 1
+  Files: src/services/luxuryPurchaseService.ts
+
+generateRoomImage → generate_room_image
+  Occurrences: 1
+  Files: src/services/roomService.ts
+
+getMessageBoardContext → get_message_board_context
+  Occurrences: 1
+  Files: src/services/socialMessageBoardService.ts
+
+spiralRiskReduction → spiral_risk_reduction
+  Occurrences: 1
+  Files: src/services/spiralPreventionService.ts
+
+highRiskPairs → high_risk_pairs
+  Occurrences: 1
+  Files: src/services/wealthDisparityService.ts
+
+predictedBehavior → predicted_behavior
+  Occurrences: 1
+  Files: src/systems/battleEngine.ts
+
+roundSummary → round_summary
+  Occurrences: 1
+  Files: src/systems/battleFlowCoordinator.ts
+
+moraleEvents → morale_events
+  Occurrences: 1
+  Files: src/systems/physicalBattleEngine.ts
+
+overallPerformance → overall_performance
+  Occurrences: 1
+  Files: src/systems/postBattleAnalysis.ts
+
+forEach → for_each
+  Occurrences: 1
+  Files: src/test/testAdherenceSystem.ts
+
+getTraumaProfile → get_trauma_profile
+  Occurrences: 1
+  Files: src/tests/financialSystemIntegrationTest.ts
+
+calculateHealingProgress → calculate_healing_progress
+  Occurrences: 1
+  Files: src/tests/financialSystemIntegrationTest.ts
+
+EventType → event_type
+  Occurrences: 1
+  Files: src/tests/financialSystemIntegrationTest.ts
+
+expectedTier → expected_tier
+  Occurrences: 1
+  Files: src/utils/finance.tiers.spec.ts
+

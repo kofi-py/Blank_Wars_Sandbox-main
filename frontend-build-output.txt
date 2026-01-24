@@ -1,0 +1,70 @@
+
+> frontend@0.1.0 build
+> next build
+
+   ▲ Next.js 15.3.4
+   - Environments: .env.production.local, .env.local
+
+   Creating an optimized production build ...
+ ✓ Compiled successfully in 7.0s
+   Skipping validation of types
+   Skipping linting
+   Collecting page data ...
+   Generating static pages (0/25) ...
+🔍 PAGE DEBUG - Second verification test: { user: false, is_loading: true, isMobile: false }
+🏗️ SINGLETON: Creating NEW ConflictDatabaseService instance
+🔧 Kitchen Chat Service initializing with URL: https://api.blankwars.com
+🔧 NODE_ENV: production
+🔧 NEXT_PUBLIC_BACKEND_URL: https://api.blankwars.com
+🔧 Current hostname: SSR
+   Generating static pages (6/25) 
+🔥 NEW KITCHEN CHAT SERVICE CREATED WITH CONFLICT DETECTION!
+🔄 SINGLETON: Returning existing ConflictDatabaseService instance with 0 conflicts
+🧠 Therapy Chat Service initializing with URL: https://api.blankwars.com
+🔄 Therapy Chat Service: Using HTTP-only mode (WebSockets disabled)
+🎖️ [JUDGE-SUB] Event-driven judge subscription active
+   Generating static pages (12/25) 
+🏠 Real Estate Agent selected: barry
+🏠 Active Real Estate Agent Bonuses (Speed Deals): {
+  facility_cost_reduction: '3%',
+  training_speed_boost: '10%',
+  xp_gain_increase: '0%',
+  energy_regenBonus: '0%',
+  special_traits: { team_ambition: false, climate_immunity: false }
+}
+   Generating static pages (18/25) 
+ ✓ Generating static pages (25/25)
+   Finalizing page optimization ...
+   Collecting build traces ...
+
+Route (app)                                Size  First Load JS
+┌ ○ /                                   5.11 kB         793 kB
+├ ○ /_not-found                           195 B         577 kB
+├ ƒ /api/socket                           143 B         576 kB
+├ ○ /challenges                         1.36 kB         789 kB
+├ ○ /challenges/blank-beast-ball          567 B         577 kB
+├ ○ /coach                              3.15 kB         791 kB
+├ ○ /cookie-debug                       1.33 kB         578 kB
+├ ○ /debug-auth                           813 B         582 kB
+├ ○ /debug-test                           143 B         576 kB
+├ ○ /equipment-test                       502 B         787 kB
+├ ○ /game                               57.8 kB         895 kB
+├ ○ /login-test                           979 B         582 kB
+├ ○ /simple                               143 B         576 kB
+├ ○ /simple-test                          143 B         576 kB
+├ ○ /test                                 143 B         576 kB
+├ ○ /test-3d-theater                     2.5 kB         586 kB
+├ ○ /test-bubbles                         901 B         577 kB
+├ ○ /test-chat                          1.25 kB         578 kB
+├ ○ /test-chat-api                       2.5 kB         786 kB
+├ ○ /test-facilities                     2.4 kB         801 kB
+├ ○ /test-inventory                     4.17 kB         791 kB
+└ ○ /test-kitchen                       3.08 kB         617 kB
++ First Load JS shared by all            576 kB
+  └ chunks/vendors-042e9e03638f553d.js   574 kB
+  └ other shared chunks (total)         2.22 kB
+
+
+○  (Static)   prerendered as static content
+ƒ  (Dynamic)  server-rendered on demand
+

@@ -1,0 +1,39 @@
+# Dependencies
+node_modules
+**/node_modules
+npm-debug.log
+pnpm-debug.log
+
+# Environment files
+.env
+.env.local
+*.env
+
+# Build outputs
+dist
+build
+backend/dist
+
+# Logs
+*.log
+
+# OS files
+.DS_Store
+*.swp
+
+# Git
+.git
+.gitignore
+
+# IDE
+.vscode
+.idea
+
+# Database files
+*.db
+*.sqlite
+
+# Docker
+Dockerfile*
+docker-compose*.yml
+.dockerignore

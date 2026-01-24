@@ -1,0 +1,18 @@
+FROM quay.io/go-skynet/local-ai:latest
+
+# Copy model files
+COPY models/ /models/
+
+# Set environment variables for production
+ENV DEBUG=true
+ENV RESPONSE_MODE=sync
+ENV THREADS=4
+ENV CONTEXT_SIZE=4096
+ENV BACKEND=llama
+ENV DISABLE_PROMPT_CACHE=false
+
+# Expose port 8080
+EXPOSE 8080
+
+# Set the default command to run the specific model
+CMD ["llama-3.2-3b-instruct"]

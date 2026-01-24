@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Blank Wars - Image Categorizer</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: #1a1a1a;
+            color: white;
+            margin: 0;
+            padding: 20px;
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        .image-card {
+            background: #2a2a2a;
+            border-radius: 10px;
+            padding: 15px;
+            border: 2px solid #444;
+        }
+        .image-container {
+            width: 100%;
+            height: 200px;
+            background: #333;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 15px;
+            overflow: hidden;
+        }
+        .image-container img {
+            max-width: 100%;
+            max-height: 100%;
+            object-fit: contain;
+        }
+        .image-info {
+            font-size: 12px;
+            color: #888;
+            margin-bottom: 10px;
+            word-break: break-all;
+        }
+        .controls {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        .btn {
+            padding: 8px 12px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 12px;
+            transition: background-color 0.2s;
+        }
+        .btn-weapon { background: #8B4513; color: white; }
+        .btn-armor { background: #4169E1; color: white; }
+        .btn-accessory { background: #9932CC; color: white; }
+        .btn-item { background: #32CD32; color: white; }
+        .btn-character { background: #FF6347; color: white; }
+        .btn-health { background: #DC143C; color: white; }
+        .btn-other { background: #696969; color: white; }
+        .btn:hover { opacity: 0.8; }
+        .matched { border-color: #00ff00; }
+        .database-items {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            background: #2a2a2a;
+            padding: 15px;
+            border-radius: 8px;
+            max-width: 300px;
+            max-height: 80vh;
+            overflow-y: auto;
+            font-size: 11px;
+            border: 1px solid #555;
+        }
+        .item-category {
+            margin-bottom: 15px;
+        }
+        .item-category h4 {
+            margin: 0 0 5px 0;
+            color: #ffaa00;
+        }
+        .item-list {
+            max-height: 150px;
+            overflow-y: auto;
+            font-size: 10px;
+            line-height: 1.2;
+        }
+        .stats {
+            position: fixed;
+            bottom: 10px;
+            right: 10px;
+            background: #2a2a2a;
+            padding: 10px;
+            border-radius: 8px;
+            border: 1px solid #555;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🏛️ Blank Wars Image Categorizer</h1>
+        <p>376 Gemini-generated images to categorize</p>
+        <p><strong>Instructions:</strong> Click buttons to categorize each image for database matching</p>
+    </div>
+
+    <div class="database-items">
+        <h3>Database Items (138 total)</h3>
+        
+        <div class="item-category">
+            <h4>🗡️ Weapons (29)</h4>
+            <div class="item-list">
+                Wooden Club ($60), Wooden Staff ($80), Rusty Sword ($100), Trojan War Sword ($200), 
+                Apprentice Staff ($200), Iron Mace ($350), Iron Sword ($400), Crystal Staff ($450), 
+                Mongol Warrior's Bow ($500), Spiked War Hammer ($1,100), Sharp Steel Sword ($1,200), 
+                Sarissa of Macedonia ($1,200), Alien Ray Gun ($1,200), Sammy's Brass Knuckles ($1,200), 
+                Robin's Quarterstaff ($1,300), Billy's Lasso ($1,300), Arcane Staff ($1,400), 
+                Silenced Pistol ($1,900), Pharaoh's Crook and Flail ($2,100), Colt .45 Peacemaker ($2,600), 
+                Louisville Slugger Bat ($2,700), Longbow of Sherwood ($2,800), Healing Ray ($3,200), 
+                Flame Sword ($3,500), Gleipnir Fragments ($3,600), Elemental Staff ($4,200), 
+                Blessed Sword of Compiègne ($4,400), Ruyi Jingu Bang ($5,000), Death Ray Prototype ($10,000)
+            </div>
+        </div>
+
+        <div class="item-category">
+            <h4>🛡️ Body Armor (11)</h4>
+            <div class="item-list">
+                Leather Vest ($120), Arctic Expedition Gear ($160), Laboratory Coat ($170), 
+                Chain Mail ($500), Cloak of Shadows ($1,100), Plate Armor ($1,600), 
+                Dracula's Cape ($1,700), Enchanted Robes ($3,800), Assembled Body Parts ($4,200), 
+                Adaptive Armor Plating ($4,800), Armor of the Dragon Kings ($5,000), 
+                Cloak of Sherwood's Shroud ($6,000), White Armor of Tours ($9,500)
+            </div>
+        </div>
+
+        <div class="item-category">
+            <h4>👑 Accessories (47)</h4>
+            <div class="item-list">
+                Vial of Blood ($180), Tactical Earpiece ($180), Royal Egyptian Jewelry ($250), 
+                Ring of Power ($200), Magnifying Glass ($220), Phoenix Feather ($1,200), 
+                Crown of the Two Lands ($12,000), Golden Eyes of Truth ($5,000), etc.
+            </div>
+        </div>
+
+        <div class="item-category">
+            <h4>🧪 Items (17)</h4>
+            <div class="item-list">
+                Small Health Potion ($50), Small Mana Potion ($40), Medium Health Potion ($150), 
+                Large Health Potion ($400), Full Restore Potion ($1,000), Phoenix Feather ($5,000), 
+                Antidote ($150), Strength/Speed/Defense Potions ($200), Holy Water ($300)
+            </div>
+        </div>
+    </div>
+
+    <div class="stats">
+        <strong>Progress:</strong><br>
+        <span id="categorized">0</span> / 376 categorized
+    </div>
+
+    <div class="grid" id="imageGrid">
+        <!-- Images will be populated by JavaScript -->
+    </div>
+
+    <script>
+        // This would need to be populated with actual image paths
+        const imagePaths = [
+            '/Users/stevengreenstein/Downloads/Gemini_Generated_Image_8j8wi48j8wi48j8w.png',  // Black sword
+            '/Users/stevengreenstein/Downloads/Gemini_Generated_Image_c8cy24c8cy24c8cy.png',  // Egyptian crown
+            '/Users/stevengreenstein/Downloads/Gemini_Generated_Image_h38msbh38msbh38m.png',  // Crossed revolvers
+            // Add more image paths here...
+        ];
+
+        let categorizedCount = 0;
+
+        function createImageCard(imagePath, index) {
+            const filename = imagePath.split('/').pop();
+            
+            return `
+                <div class="image-card" id="card-${index}">
+                    <div class="image-container">
+                        <img src="file://${imagePath}" alt="Image ${index + 1}" onerror="this.src='data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgZmlsbD0iIzMzMyIvPjx0ZXh0IHg9IjEwMCIgeT0iMTAwIiBmaWxsPSIjNjY2IiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBkeT0iLjNlbSI+Tm8gSW1hZ2U8L3RleHQ+PC9zdmc+'">
+                    </div>
+                    <div class="image-info">
+                        ${filename}
+                    </div>
+                    <div class="controls">
+                        <button class="btn btn-weapon" onclick="categorize(${index}, 'weapon')">⚔️ Weapon</button>
+                        <button class="btn btn-armor" onclick="categorize(${index}, 'armor')">🛡️ Armor</button>
+                        <button class="btn btn-accessory" onclick="categorize(${index}, 'accessory')">👑 Accessory</button>
+                        <button class="btn btn-item" onclick="categorize(${index}, 'item')">🧪 Item</button>
+                        <button class="btn btn-character" onclick="categorize(${index}, 'character')">👤 Character</button>
+                        <button class="btn btn-health" onclick="categorize(${index}, 'health_center')">🏥 Health</button>
+                        <button class="btn btn-other" onclick="categorize(${index}, 'other')">❓ Other</button>
+                    </div>
+                </div>
+            `;
+        }
+
+        function categorize(index, category) {
+            const card = document.getElementById(`card-${index}`);
+            card.classList.add('matched');
+            card.setAttribute('data-category', category);
+            
+            categorizedCount++;
+            document.getElementById('categorized').textContent = categorizedCount;
+            
+            console.log(`Image ${index + 1} categorized as: ${category}`);
+            // Here you would save the categorization data
+        }
+
+        function loadImages() {
+            const grid = document.getElementById('imageGrid');
+            const imageCards = imagePaths.map((path, index) => createImageCard(path, index));
+            grid.innerHTML = imageCards.join('');
+        }
+
+        // Initialize
+        loadImages();
+    </script>
+</body>
+</html>

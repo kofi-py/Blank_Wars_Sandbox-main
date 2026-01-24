@@ -1,0 +1,339 @@
+TS2339 CAMELCASE → SNAKE_CASE CONVERSION MAP
+================================================================================
+
+currentTickets → current_tickets (3 occurrences)
+  Files: src/components/TicketCounter.tsx, src/components/ChatWithTickets.tsx, src/components/TicketConfirmationModal.tsx
+  Types: TicketConfirmationModalProps, { balance: TicketBalance; loading: boolean; error: string; fetchBalance: () => Promise<void>; fetchHistory: (limit?: number) => Promise<any>; purchaseTickets: (packageId: string, amount: number) => Promise<...>; ... 5 more ...; is_low_on_tickets: boolean; }
+
+userProfile → user_profile (3 occurrences)
+  Files: src/hooks/useLobby.ts, src/components/UserProfile.tsx, src/components/Lobby.tsx
+  Types: UserProfileProps, UseLobbyProps, LobbyProps
+
+hexSize → hex_size (2 occurrences)
+  Files: src/components/battle/HexGrid.tsx, src/components/battle/CharacterToken.tsx
+  Types: CharacterTokenProps, HexGridProps
+
+currentMatch → current_match (2 occurrences)
+  Files: src/components/enhanced/TeamChatPanelWithBubbles.tsx, src/components/TeamChatPanel.tsx
+  Types: TeamChatPanelProps, TeamChatPanelWithBubblesProps
+
+showComparison → show_comparison (2 occurrences)
+  Files: src/components/EquipmentDetailsModal.tsx, src/components/EquipmentDetailsModalDB.tsx
+  Types: EquipmentDetailsModalProps, EquipmentDetailsModalDBProps
+
+globalSelectedCharacterId → global_selected_character_id (2 occurrences)
+  Files: src/components/TrainingGrounds_v_?.tsx, src/components/InventoryManagerWrapper.tsx
+  Types: InventoryManagerWrapperProps, TrainingGroundsProps
+
+setGlobalSelectedCharacterId → set_global_selected_character_id (2 occurrences)
+  Files: src/components/TrainingGrounds_v_?.tsx, src/components/InventoryManagerWrapper.tsx
+  Types: InventoryManagerWrapperProps, TrainingGroundsProps
+
+coachTrust → coach_trust (2 occurrences)
+  Files: src/components/TeamDashboard.tsx
+  Types: Character
+
+potentialDeviations → potential_deviations (2 occurrences)
+  Files: src/data/characterPsychology.ts
+  Types: DeviationRisk
+
+spiralRisk → spiral_risk (2 occurrences)
+  Files: src/services/spiralPreventionService.ts
+  Types: SpiralState
+
+isUserTeam → is_user_team (1 occurrences)
+  Files: src/components/battle/CharacterToken.tsx
+  Types: CharacterTokenProps
+
+timeLimit → time_limit (1 occurrences)
+  Files: src/components/battle/CoachingTimeoutModal.tsx
+  Types: CoachingTimeoutModalProps
+
+isCharacterInjured → is_character_injured (1 occurrences)
+  Files: src/components/battle/CoachingTimeoutModal.tsx
+  Types: CoachingTimeoutModalProps
+
+isTeamLosing → is_team_losing (1 occurrences)
+  Files: src/components/battle/CoachingTimeoutModal.tsx
+  Types: CoachingTimeoutModalProps
+
+selectedHex → selected_hex (1 occurrences)
+  Files: src/components/battle/HexGrid.tsx
+  Types: HexGridProps
+
+hoveredHex → hovered_hex (1 occurrences)
+  Files: src/components/battle/HexGrid.tsx
+  Types: HexGridProps
+
+occupiedSlots → occupied_slots (1 occurrences)
+  Files: src/components/BedComponent.tsx
+  Types: BedComponentProps
+
+showDetails → show_details (1 occurrences)
+  Files: src/components/BedComponent.tsx
+  Types: BedComponentProps
+
+playerCurrency → player_currency (1 occurrences)
+  Files: src/components/CardPackOpening.tsx
+  Types: CardPackOpeningProps
+
+userCharacters → user_characters (1 occurrences)
+  Files: src/components/CharacterEchoManager.tsx
+  Types: CharacterEchoManagerProps
+
+activeBonuses → active_bonuses (1 occurrences)
+  Files: src/components/CharacterLevelManager.tsx
+  Types: CharacterLevelManagerProps
+
+isCompact → is_compact (1 occurrences)
+  Files: src/components/CharacterLevelManager.tsx
+  Types: CharacterLevelManagerProps
+
+pendingAllocations → pending_allocations (1 occurrences)
+  Files: src/components/CharacterLevelUpChat.tsx
+  Types: CharacterLevelUpChatProps
+
+currentLevel → current_level (1 occurrences)
+  Files: src/components/CharacterProgression.tsx
+  Types: CharacterProgressionProps
+
+currentXP → current_xp (1 occurrences)
+  Files: src/components/CharacterProgression.tsx
+  Types: CharacterProgressionProps
+
+updateProfile → update_profile (1 occurrences)
+  Files: src/components/CharacterSlotUpgrade.tsx
+  Types: AuthContextType
+
+hasTickets → has_tickets (1 occurrences)
+  Files: src/components/ChatWithTickets.tsx
+  Types: { balance: TicketBalance; loading: boolean; error: string; fetchBalance: () => Promise<void>; fetchHistory: (limit?: number) => Promise<any>; purchaseTickets: (packageId: string, amount: number) => Promise<...>; ... 5 more ...; is_low_on_tickets: boolean; }
+
+coachingType → coaching_type (1 occurrences)
+  Files: src/components/ChatWithTickets.tsx
+  Types: { character_name: string; character_id: string; user_message: string; coaching_type?: "skills" | "equipment" | "performance" | "individual" | "team-management" | "group-activity"; ... 4 more ...; disabled?: boolean; }
+
+currentUserGuild → current_user_guild (1 occurrences)
+  Files: src/components/Clubhouse.tsx
+  Types: ClubhouseProps
+
+isTimeoutActive → is_timeout_active (1 occurrences)
+  Files: src/components/CoachingInterface.tsx
+  Types: CoachingInterfaceProps
+
+timeRemaining → time_remaining (1 occurrences)
+  Files: src/components/CoachingInterface.tsx
+  Types: CoachingInterfaceProps
+
+skillReward → skill_reward (1 occurrences)
+  Files: src/components/CombatSkillProgression.tsx
+  Types: CombatSkillProgressionProps
+
+playerStats → player_stats (1 occurrences)
+  Files: src/components/CompetitiveMatchmaking.tsx
+  Types: CompetitiveMatchmakingProps
+
+findMatch → find_match (1 occurrences)
+  Files: src/components/CompetitiveMatchmaking.tsx
+  Types: CompetitiveMatchmakingProps
+
+availableConflicts → available_conflicts (1 occurrences)
+  Files: src/components/ConflictGuidancePanel.tsx
+  Types: ConflictGuidancePanelProps
+
+characterArchetype → character_archetype (1 occurrences)
+  Files: src/components/EquipmentManager.tsx
+  Types: Partial<EquipmentManagerProps>
+
+adherenceScore → adherence_score (1 occurrences)
+  Files: src/components/EquipmentManager.tsx
+  Types: Partial<EquipmentManagerProps>
+
+prefetchCharacter → prefetch_character (1 occurrences)
+  Files: src/components/EquipmentSystemTester.tsx
+  Types: { prefetch_character: (character_id: string) => void; prefetch_generic: () => void; prefetch_items: () => void; }
+
+clearAllBubbles → clear_all_bubbles (1 occurrences)
+  Files: src/components/examples/BubbleIntegrationExample.tsx
+  Types: { isBubbleMode: boolean; setIsBubbleMode: Dispatch<SetStateAction<boolean>>; toggleChatMode: () => void; containerDimensions: { width: number; height: number; }; ... 6 more ...; bubble_system_props: { ...; }; }
+
+bubbleSystemProps → bubble_system_props (1 occurrences)
+  Files: src/components/examples/BubbleIntegrationExample.tsx
+  Types: { isBubbleMode: boolean; setIsBubbleMode: Dispatch<SetStateAction<boolean>>; toggleChatMode: () => void; containerDimensions: { width: number; height: number; }; ... 6 more ...; bubble_system_props: { ...; }; }
+
+unlockedAchievements → unlocked_achievements (1 occurrences)
+  Files: src/components/FacilitiesManager.tsx
+  Types: FacilitiesManagerProps
+
+ownedFacilities → owned_facilities (1 occurrences)
+  Files: src/components/FacilitiesManager.tsx
+  Types: FacilitiesManagerProps
+
+currentUserProfile → current_user_profile (1 occurrences)
+  Files: src/components/FriendList.tsx
+  Types: FriendListProps
+
+showLabel → show_label (1 occurrences)
+  Files: src/components/GameplanTracker.tsx
+  Types: { value: number; size?: number; show_label?: boolean; risk_level: "low" | "medium" | "high" | "critical"; }
+
+updateInterval → update_interval (1 occurrences)
+  Files: src/components/GameplanTracker.tsx
+  Types: GameplanTrackerProps
+
+initialInventory → initial_inventory (1 occurrences)
+  Files: src/components/InventoryManager.tsx
+  Types: InventoryManagerProps
+
+newItem → new_item (1 occurrences)
+  Files: src/components/InventoryManager.tsx
+  Types: { new_item: InventoryItem; current_item: InventoryItem; slot: "weapon" | "armor" | "accessory"; }
+
+isAuthenticated → is_authenticated (1 occurrences)
+  Files: src/components/LogoutButton.tsx
+  Types: AuthContextType
+
+showOnboarding → show_onboarding (1 occurrences)
+  Files: src/components/PostRegistrationFlow.tsx
+  Types: AuthContextType
+
+setShowOnboarding → set_show_onboarding (1 occurrences)
+  Files: src/components/PostRegistrationFlow.tsx
+  Types: AuthContextType
+
+characterPoints → character_points (1 occurrences)
+  Files: src/components/PowerPointsDisplay.tsx
+  Types: PowerPointsDisplayProps
+
+showDetailed → show_detailed (1 occurrences)
+  Files: src/components/RelationshipDisplay.tsx
+  Types: RelationshipDisplayProps
+
+savedTeams → saved_teams (1 occurrences)
+  Files: src/components/TeamBuilder.tsx
+  Types: TeamBuilderProps
+
+initialTeamIds → initial_team_ids (1 occurrences)
+  Files: src/components/TeamRoster.tsx
+  Types: TeamRosterProps
+
+sceneContext → scene_context (1 occurrences)
+  Files: src/components/TestBubbleChat.tsx
+  Types: { conversations: KitchenConversation[]; scene_context: KitchenSceneContext; }
+
+gameState → game_state (1 occurrences)
+  Files: src/components/TherapyGameUI.tsx
+  Types: TherapyGameUIProps
+
+getTherapistStyles → get_therapist_styles (1 occurrences)
+  Files: src/components/TherapyModule.tsx
+  Types: ConflictDatabaseService
+
+totalSteps → total_steps (1 occurrences)
+  Files: src/components/Tutorial.tsx
+  Types: { tutorialState: TutorialState; startTutorial: (steps: TutorialStep[]) => void; nextStep: () => void; prevStep: () => void; skipTutorial: () => void; resetTutorial: () => void; ... 4 more ...; total_steps: number; }
+
+defaultSection → default_section (1 occurrences)
+  Files: src/components/TutorialSystem.tsx
+  Types: TutorialSystemProps
+
+containerWidth → container_width (1 occurrences)
+  Files: src/components/WordBubbleSystem.tsx
+  Types: WordBubbleSystemProps
+
+containerHeight → container_height (1 occurrences)
+  Files: src/components/WordBubbleSystem.tsx
+  Types: WordBubbleSystemProps
+
+spoutPosition → spout_position (1 occurrences)
+  Files: src/components/WordBubbleSystem.tsx
+  Types: WordBubble
+
+expectedMatchDifficulty → expected_match_difficulty (1 occurrences)
+  Files: src/data/competitiveMatchmaking.ts
+  Types: OpponentProfile
+
+stationId → station_id (1 occurrences)
+  Files: src/data/craftingSystem.ts
+  Types: { recipe_id: string; start_time: number; duration: number; }
+
+prerequisiteFacilities → prerequisite_facilities (1 occurrences)
+  Files: src/data/facilities.ts
+  Types: { team_level?: number; achievements?: string[]; prerequisite_facilities?: string[]; }
+
+sortPreference → sort_preference (1 occurrences)
+  Files: src/data/inventory.ts
+  Types: CharacterInventory
+
+wsSocket → ws_socket (1 occurrences)
+  Files: src/hooks/useBattleChat.ts
+  Types: UseBattleChatProps
+
+announceBattleCry → announce_battle_cry (1 occurrences)
+  Files: src/hooks/useBattleCommunication.ts
+  Types: UseBattleCommunicationProps
+
+getEventsByCharacter → get_events_by_character (1 occurrences)
+  Files: src/hooks/useBattleRewards.ts
+  Types: GameEventBus
+
+executeAbility → execute_ability (1 occurrences)
+  Files: src/hooks/usePsychologySystem.ts
+  Types: UsePsychologySystemProps
+
+headquartersEffects → headquarters_effects (1 occurrences)
+  Files: src/hooks/usePsychologySystem.ts
+  Types: UsePsychologySystemProps
+
+getCharacter → get_character (1 occurrences)
+  Files: src/services/characterHealthService.ts
+  Types: { get_user_characters: () => Promise<Character[]>; update_character: (character_id: string, updates: CharacterUpdates) => Promise<any>; ... 15 more ...; get_inventory: (character_id: string) => Promise<...>; }
+
+messageId → message_id (1 occurrences)
+  Files: src/services/chatAdapter.ts
+  Types: { text: string; message_id?: string; }
+
+amountInvolved → amount_involved (1 occurrences)
+  Files: src/services/eventContextService.ts
+  Types: { decision_type: "investment" | "purchase" | "advice" | "crisis" | "spiral" | "breakthrough"; amount_involved: number; outcome: "pending" | "success" | "failure"; stress_impact: number; trust_impact: number; }
+
+trustImpact → trust_impact (1 occurrences)
+  Files: src/services/eventContextService.ts
+  Types: { decision_type: "investment" | "purchase" | "advice" | "crisis" | "spiral" | "breakthrough"; amount_involved: number; outcome: "pending" | "success" | "failure"; stress_impact: number; trust_impact: number; }
+
+totalStress → total_stress (1 occurrences)
+  Files: src/services/financialRoomMoodService.ts
+  Types: { stress: number; factors: FinancialStressFactors; recommendations: string[]; }
+
+currentHappiness → current_happiness (1 occurrences)
+  Files: src/services/financialRoomMoodService.ts
+  Types: LuxuryPurchase
+
+generateRoomImage → generate_room_image (1 occurrences)
+  Files: src/services/roomService.ts
+  Types: RoomImageDataService
+
+getMessageBoardContext → get_message_board_context (1 occurrences)
+  Files: src/services/socialMessageBoardService.ts
+  Types: EventContextService
+
+overallPerformance → overall_performance (1 occurrences)
+  Files: src/systems/postBattleAnalysis.ts
+  Types: CharacterEvaluation
+
+forEach → for_each (1 occurrences)
+  Files: src/test/testAdherenceSystem.ts
+  Types: ActionSurvey
+
+getTraumaProfile → get_trauma_profile (1 occurrences)
+  Files: src/tests/financialSystemIntegrationTest.ts
+  Types: FinancialTraumaRecoveryService
+
+calculateHealingProgress → calculate_healing_progress (1 occurrences)
+  Files: src/tests/financialSystemIntegrationTest.ts
+  Types: FinancialTraumaRecoveryService
+
+expectedTier → expected_tier (1 occurrences)
+  Files: src/utils/finance.tiers.spec.ts
+  Types: { name: string; expected_tier: string; }
+

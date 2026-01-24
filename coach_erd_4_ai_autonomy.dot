@@ -1,0 +1,57 @@
+digraph "AI Autonomy & Psychology" {
+  rankdir=TB;
+  node [shape=plaintext];
+  edge [color="#666666", penwidth=1.5];
+  bgcolor="transparent";
+
+  labelloc="t";
+  label="AI Autonomy & Psychology\nHow characters think & decide - They have agency!";
+  fontsize=16;
+  fontname="Arial Bold";
+
+  user_characters [label=<
+    <TABLE BORDER="2" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white">
+      <TR><TD BGCOLOR="#E67E22" ALIGN="CENTER"><FONT COLOR="white" POINT-SIZE="14"><B>user_characters</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="id">id 🔑 : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="user_id">user_id : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="character_id">character_id : text</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="bond_level">bond_level : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="wallet"><B>wallet</B> : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="current_mental_health"><B>current_mental_health</B> : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="team_trust">team_trust : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="morale">morale : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="debt">debt : integer</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="financial_personality"><B>financial_personality</B> : jsonb</TD></TR>
+      <TR><TD ALIGN="CENTER" BGCOLOR="#F0F0F0"><I>+ 44 more columns</I></TD></TR>
+    </TABLE>
+  >];
+
+  character_memories [label=<
+    <TABLE BORDER="2" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white">
+      <TR><TD BGCOLOR="#E67E22" ALIGN="CENTER"><FONT COLOR="white" POINT-SIZE="14"><B>character_memories</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="id">id 🔑 : character varying</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="character_id">character_id : character varying</TD></TR>
+      <TR><TD ALIGN="CENTER" BGCOLOR="#F0F0F0"><I>+ 17 more columns</I></TD></TR>
+    </TABLE>
+  >];
+
+  financial_decisions [label=<
+    <TABLE BORDER="2" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white">
+      <TR><TD BGCOLOR="#E67E22" ALIGN="CENTER"><FONT COLOR="white" POINT-SIZE="14"><B>financial_decisions</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="id">id 🔑 : uuid</TD></TR>
+      <TR><TD ALIGN="CENTER" BGCOLOR="#F0F0F0"><I>+ 9 more columns</I></TD></TR>
+    </TABLE>
+  >];
+
+  memory_entries [label=<
+    <TABLE BORDER="2" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white">
+      <TR><TD BGCOLOR="#E67E22" ALIGN="CENTER"><FONT COLOR="white" POINT-SIZE="14"><B>memory_entries</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="id">id 🔑 : uuid</TD></TR>
+      <TR><TD ALIGN="LEFT" PORT="character_id">character_id : text</TD></TR>
+      <TR><TD ALIGN="CENTER" BGCOLOR="#F0F0F0"><I>+ 4 more columns</I></TD></TR>
+    </TABLE>
+  >];
+
+  // Relationships
+  financial_decisions:user_character_id -> user_characters:id;
+}

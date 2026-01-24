@@ -1,0 +1,794 @@
+// Blank Wars Database Schema - DBML Format
+// Generated from PostgreSQL - Use at https://dbdiagram.io
+
+Table active_challenges {
+  id uuid [pk]
+  challenge_template_id uuid
+  user_id text
+  status varchar(20) [not null]
+  registration_deadline timestamp with time zone
+  start_time timestamp with time zone
+  end_time timestamp with time zone
+  game_state jsonb [not null]
+  created_at timestamp with time zone [not null]
+  updated_at timestamp with time zone [not null]
+}
+
+Table battles {
+  id text [pk]
+  user1_id text [not null]
+  user2_id text [not null]
+  user_character1_id text [not null]
+  user_character2_id text [not null]
+  status text
+  current_round integer
+  turn_count integer
+  p1_strategy text
+  p2_strategy text
+  winner_id text
+  end_reason text
+  combat_log text
+  chat_logs text
+  xp_gained integer
+  bond_gained integer
+  currency_gained integer
+  started_at timestamp without time zone
+  ended_at timestamp without time zone
+}
+
+Table card_packs {
+  id uuid [pk]
+  name varchar(100) [not null]
+  description text
+  pack_type varchar(50) [not null]
+  guaranteed_contents jsonb
+  possible_contents jsonb
+  total_cards integer
+  rarity_weights jsonb
+  cost_credits integer
+  cost_real_money numeric
+  is_purchasable boolean
+  requires_level integer
+  available_from timestamp without time zone
+  available_until timestamp without time zone
+  max_purchases_per_user integer
+  created_at timestamp without time zone
+  updated_at timestamp without time zone
+}
+
+Table challenge_alliances {
+  id uuid [pk]
+  active_challenge_id uuid
+  alliance_name varchar(100)
+  leader_character_id text
+  member_character_ids ARRAY
+  is_active boolean [not null]
+  formed_at timestamp with time zone [not null]
+  dissolved_at timestamp with time zone
+  created_at timestamp with time zone [not null]
+  updated_at timestamp with time zone [not null]
+}
+
+Table challenge_leaderboard {
+  id uuid [pk]
+  user_character_id text
+  total_challenges_entered integer [not null]
+  total_challenges_won integer [not null]
+  total_top_3_finishes integer [not null]
+  wins_by_type jsonb [not null]
+  total_currency_earned integer [not null]
+  total_items_won integer [not null]
+  current_win_streak integer [not null]
+  best_win_streak integer [not null]
+  overall_rank integer
+  elo_rating integer [not null]
+  created_at timestamp with time zone [not null]
+  updated_at timestamp with time zone [not null]
+}
+
+Table challenge_participants {
+  id uuid [pk]
+  active_challenge_id uuid
+  user_character_id text
+  registration_time timestamp with time zone [not null]
+  team_assignment varchar(50)
+  performance_metrics jsonb [not null]
+  final_score numeric
+  placement integer
+  is_eliminated boolean [not null]
+  elimination_time timestamp with time zone
+  created_at timestamp with time zone [not null]
+  updated_at timestamp with time zone [not null]
+}
+
+Table challenge_results {
+  id uuid [pk]
+  active_challenge_id uuid
+  challenge_template_id uuid
+  winner_character_id text
+  second_place_character_id text
+  third_place_character_id text
+  total_participants integer [not null]
+  completion_time_minutes integer
+  full_results jsonb [not null]
+  highlight_moments ARRAY
+  total_rewards_given jsonb [not null]
+  completed_at timestamp with time zone [not null]
+}
+
+Table challenge_rewards {
+  id uuid [pk]
+  challenge_template_id uuid
+  reward_type varchar(50) [not null]
+  reward_config jsonb [not null]
+  placement_required varchar(20) [not null]
+  is_guaranteed boolean [not null]
+  probability numeric [not null]
+  created_at timestamp with time zone [not null]
+  updated_at timestamp with time zone [not null]
+}
+
+Table challenge_templates {
+  id uuid [pk]
+  name varchar(255) [not null]
+  description text [not null]
+  challenge_type varchar(50) [not null]
+  min_participants integer [not null]
+  max_participants integer [not null]
+  requires_team boolean
+  mechanics jsonb [not null]
+  difficulty varchar(20) [not null]
+  estimated_duration_minutes integer [not null]
+  reality_show_parody varchar(100)
+  theme_tags ARRAY
+  base_currency_reward integer [not null]
+  reward_scaling jsonb [not null]
+  is_active boolean [not null]
+  created_at timestamp with time zone [not null]
+  updated_at timestamp with time zone [not null]
+}
+
+Table character_abilities {
+  id text [pk]
+  character_id text
+  ability_id text [not null]
+  ability_name text [not null]
+  rank integer
+  max_rank integer
+  unlocked boolean
+  unlocked_at timestamp without time zone
+}
+
+Table character_experience_log {
+  id text [pk]
+  character_id text
+  source text [not null]
+  amount integer [not null]
+  multiplier numeric
+  description text
+  timestamp timestamp without time zone
+}
+
+Table character_healing_sessions {
+  id text [pk]
+  character_id text [not null]
+  facility_id text [not null]
+  session_type text [not null]
+  start_time timestamp without time zone
+  estimated_completion_time timestamp without time zone [not null]
+  currency_paid integer
+  premium_paid integer
+  is_active boolean
+  is_completed boolean
+  created_at timestamp without time zone
+}
+
+Table character_living_context {
+  id integer [pk]
+  character_id varchar(255)
+  team_id varchar(255)
+  sleeps_on_floor boolean
+  sleeps_on_couch boolean
+  sleeps_under_table boolean
+  room_overcrowded boolean
+  floor_sleeper_count integer
+  roommate_count integer
+  current_mood varchar(50)
+  current_energy_level integer
+  last_sleep_quality varchar(20)
+  created_at timestamp without time zone
+  updated_at timestamp without time zone
+}
+
+Table character_memories {
+  id varchar(255) [pk]
+  character_id varchar(255) [not null]
+  event_id varchar(255)
+  content text [not null]
+  emotion_type varchar(50)
+  intensity integer
+  valence integer
+  importance integer
+  created_at timestamp with time zone [not null]
+  last_recalled timestamp with time zone
+  recall_count integer
+  associated_characters ARRAY
+  tags ARRAY
+  decay_rate numeric
+  chat_context jsonb
+  cross_reference_data jsonb
+  financial_metadata jsonb
+  therapy_metadata jsonb
+  confessional_metadata jsonb
+}
+
+Table character_progression {
+  character_id text [pk]
+  stat_points integer
+  skill_points integer
+  ability_points integer
+  tier text
+  title text
+  last_updated timestamp without time zone
+}
+
+Table character_skills {
+  id text [pk]
+  character_id text
+  skill_id text [not null]
+  skill_name text [not null]
+  level integer
+  experience integer
+  max_level integer
+  unlocked boolean
+  last_updated timestamp without time zone
+}
+
+Table characters {
+  id text [pk]
+  name text [not null]
+  title text
+  archetype text
+  origin_era text
+  rarity text
+  base_health integer [not null]
+  base_attack integer [not null]
+  base_defense integer [not null]
+  base_speed integer [not null]
+  base_special integer [not null]
+  personality_traits text
+  conversation_style text
+  backstory text
+  conversation_topics text
+  avatar_emoji text
+  artwork_url text
+  abilities text
+  training integer
+  team_player integer
+  ego integer
+  mental_health integer
+  communication integer
+  created_at timestamp without time zone
+  gameplan_adherence_level integer
+  current_mental_health integer
+  stress_level integer
+  team_trust integer
+  battle_focus integer
+  species text
+  comedian_name text
+  comedy_style text
+  default_mood varchar(50)
+  default_energy_level integer
+  role varchar(20)
+}
+
+Table chat_messages {
+  id text [pk]
+  user_id text [not null]
+  character_id text [not null]
+  battle_id text
+  player_message text [not null]
+  character_response text [not null]
+  message_context text
+  model_used text
+  tokens_used integer
+  response_time_ms integer
+  bond_increase boolean
+  memory_saved boolean
+  created_at timestamp without time zone
+}
+
+Table chat_sessions {
+  chat_id varchar(255) [pk]
+  current_turn_count integer
+  created_at timestamp without time zone
+  updated_at timestamp without time zone
+}
+
+Table claimable_pack_contents {
+  id text [pk]
+  claimable_pack_id text [not null]
+  character_id text [not null]
+  created_at timestamp without time zone
+}
+
+Table claimable_packs {
+  id text [pk]
+  pack_type varchar(50) [not null]
+  is_claimed boolean
+  claimed_by_user_id text
+  claimed_at timestamp without time zone
+  created_at timestamp without time zone
+  user_id text
+  pack_id text
+}
+
+Table coach_progression {
+  user_id text [pk]
+  coach_level integer
+  coach_experience integer
+  coach_title text
+  psychology_skill_points integer
+  battle_strategy_skill_points integer
+  character_development_skill_points integer
+  total_battles_coached integer
+  total_wins_coached integer
+  psychology_interventions integer
+  successful_interventions integer
+  gameplan_adherence_rate real
+  team_chemistry_improvements integer
+  character_developments integer
+  created_at timestamp without time zone
+  updated_at timestamp without time zone
+  financial_advice_given integer
+  successful_financial_advice integer
+  spirals_prevented integer
+  financial_conflicts_resolved integer
+}
+
+Table coach_skills {
+  id text [pk]
+  user_id text [not null]
+  skill_tree text [not null]
+  skill_name text [not null]
+  skill_level integer
+  unlocked_at timestamp without time zone
+}
+
+Table coach_xp_events {
+  id text [pk]
+  user_id text [not null]
+  event_type text [not null]
+  event_subtype text
+  xp_gained integer [not null]
+  description text
+  battle_id text
+  character_id text
+  created_at timestamp without time zone
+}
+
+Table cron_logs {
+  id integer [pk]
+  job_type varchar(50) [not null]
+  success_count integer [not null]
+  error_count integer [not null]
+  duration_ms integer [not null]
+  description text
+  metadata jsonb
+  error_message text
+  executed_at timestamp with time zone
+  created_at timestamp with time zone
+}
+
+Table events {
+  id bigint [pk]
+  session_id text [not null]
+  type text [not null]
+  actor text
+  target text
+  payload jsonb
+  ts timestamp with time zone
+}
+
+Table facts {
+  id bigint [pk]
+  session_id text [not null]
+  type text [not null]
+  key text [not null]
+  value text [not null]
+  status text [not null]
+  started_at timestamp with time zone
+  updated_at timestamp with time zone
+  resolved_at timestamp with time zone
+  expires_at timestamp with time zone
+}
+
+Table financial_decisions {
+  id uuid [pk]
+  user_character_id text [not null]
+  decision_type text [not null]
+  amount_cents integer [not null]
+  payment_method text
+  wallet_delta_cents integer
+  debt_delta_cents integer
+  description text
+  metadata jsonb
+  created_at timestamp with time zone
+}
+
+Table game_events {
+  id varchar(255) [pk]
+  type varchar(100) [not null]
+  source varchar(100) [not null]
+  primary_character_id varchar(255) [not null]
+  secondary_character_ids ARRAY
+  severity varchar(20)
+  category varchar(50) [not null]
+  description text [not null]
+  metadata jsonb
+  tags ARRAY
+  importance integer
+  timestamp timestamp with time zone [not null]
+  created_at timestamp with time zone
+}
+
+Table headquarters_rooms {
+  id uuid [pk]
+  headquarters_id uuid [not null]
+  room_id text [not null]
+  room_type text [not null]
+  capacity integer
+  occupied_slots integer
+  theme text
+  furniture jsonb
+  position_x integer
+  position_y integer
+  width integer
+  height integer
+  created_at timestamp without time zone
+}
+
+Table healing_facilities {
+  id text [pk]
+  name text [not null]
+  facility_type text [not null]
+  healing_rate_multiplier numeric
+  currency_cost_per_hour integer
+  premium_cost_per_hour integer
+  max_injury_severity text
+  headquarters_tier_required text
+  description text
+  created_at timestamp without time zone
+}
+
+Table memory_entries {
+  id uuid [pk]
+  character_id text [not null]
+  session_id text [not null]
+  key text [not null]
+  value text [not null]
+  created_at timestamp with time zone [not null]
+}
+
+Table migration_log {
+  id integer [pk]
+  version varchar(20) [not null]
+  description text
+  executed_at timestamp without time zone
+  execution_time_ms integer
+  rollback_sql text
+}
+
+Table migration_meta {
+  key text [pk]
+  value text
+  applied_at timestamp with time zone
+}
+
+Table purchases {
+  id uuid [pk]
+  user_id text [not null]
+  item_type varchar(50) [not null]
+  item_id varchar(100)
+  quantity integer
+  cost_coins integer
+  cost_credits integer
+  cost_premium_gems integer
+  cost_real_money numeric
+  currency_type varchar(20)
+  stripe_payment_intent_id varchar(255)
+  transaction_status varchar(20)
+  payment_status varchar(20)
+  payment_method varchar(50)
+  is_fulfilled boolean
+  fulfilled_at timestamp without time zone
+  fulfillment_data jsonb
+  refund_amount numeric
+  refunded_at timestamp without time zone
+  refund_reason text
+  completed_at timestamp without time zone
+  created_at timestamp without time zone
+  updated_at timestamp without time zone
+}
+
+Table scene_triggers {
+  id integer [pk]
+  scene_type varchar(20)
+  hq_tier varchar(50)
+  trigger_text text [not null]
+  weight integer
+  domain varchar(50)
+  created_at timestamp without time zone
+}
+
+Table session_state {
+  sid text [pk]
+  character_id text [not null]
+  user_id text
+  session_flags jsonb [not null]
+  short_context text [not null]
+  last_user_intent text [not null]
+  slots jsonb [not null]
+  short_tool_result jsonb [not null]
+  digest_id text
+  schema_version smallint
+  ts_updated timestamp with time zone [not null]
+  payload jsonb [not null]
+}
+
+Table state_digest {
+  session_id text [pk]
+  text text [not null]
+  version text [not null]
+  token_count integer [not null]
+  updated_at timestamp with time zone
+}
+
+Table team_context {
+  id integer [pk]
+  team_id varchar(255)
+  hq_tier varchar(50)
+  current_scene_type varchar(20)
+  current_time_of_day varchar(20)
+  created_at timestamp without time zone
+  updated_at timestamp without time zone
+  active_teammates ARRAY
+  master_bed_character_id varchar(255)
+}
+
+Table tmp_user_characters_backup {
+  id text
+  user_id text
+  character_id text
+  serial_number text
+  nickname text
+  level integer
+  experience integer
+  bond_level integer
+  total_battles integer
+  total_wins integer
+  current_health integer
+  max_health integer
+  is_injured boolean
+  injury_severity text
+  is_dead boolean
+  death_timestamp timestamp without time zone
+  recovery_time timestamp without time zone
+  resurrection_available_at timestamp without time zone
+  death_count integer
+  pre_death_level integer
+  pre_death_experience integer
+  equipment text
+  enhancements text
+  conversation_memory text
+  significant_memories text
+  personality_drift text
+  wallet integer
+  financial_stress integer
+  coach_trust_level integer
+  acquired_at timestamp without time zone
+  last_battle_at timestamp without time zone
+  gameplan_adherence_level integer
+  current_mental_health integer
+  stress_level integer
+  team_trust integer
+  battle_focus integer
+  current_training integer
+  current_team_player integer
+  current_ego integer
+  current_communication integer
+  fatigue_level integer
+  morale integer
+  starter_gear_given boolean
+  level_bonus_attack integer
+  level_bonus_defense integer
+  level_bonus_speed integer
+  level_bonus_max_health integer
+  level_bonus_special integer
+  agent_key varchar(50)
+}
+
+Table user_characters {
+  id text [pk]
+  user_id text [not null]
+  character_id text [not null]
+  serial_number text
+  nickname text
+  level integer
+  experience integer
+  bond_level integer [not null]
+  total_battles integer
+  total_wins integer
+  current_health integer [not null]
+  max_health integer [not null]
+  is_injured boolean
+  injury_severity text
+  is_dead boolean
+  death_timestamp timestamp without time zone
+  recovery_time timestamp without time zone
+  resurrection_available_at timestamp without time zone
+  death_count integer
+  pre_death_level integer
+  pre_death_experience integer
+  equipment text
+  enhancements text
+  conversation_memory text
+  significant_memories text
+  personality_drift text
+  wallet integer [not null]
+  financial_stress integer
+  coach_trust_level integer
+  acquired_at timestamp without time zone
+  last_battle_at timestamp without time zone
+  gameplan_adherence_level integer
+  current_mental_health integer
+  stress_level integer
+  team_trust integer
+  battle_focus integer
+  current_training integer
+  current_team_player integer
+  current_ego integer
+  current_communication integer
+  fatigue_level integer
+  morale integer
+  starter_gear_given boolean
+  level_bonus_attack integer
+  level_bonus_defense integer
+  level_bonus_speed integer
+  level_bonus_max_health integer
+  level_bonus_special integer
+  agent_key varchar(50)
+  debt integer [not null]
+  monthly_earnings integer [not null]
+  financial_personality jsonb
+  recent_decisions jsonb [not null]
+  sleeping_arrangement varchar(50)
+}
+
+Table user_currency {
+  user_id text [pk]
+  battle_tokens integer
+  premium_currency integer
+  last_updated timestamp without time zone
+}
+
+Table user_daily_stats {
+  user_id varchar(255) [pk]
+  date date [pk]
+  daily_turn_count integer
+  xp_earned integer
+  created_at timestamp without time zone
+  updated_at timestamp without time zone
+}
+
+Table user_equipment {
+  id text [pk]
+  user_id text [not null]
+  equipment_id text [not null]
+  is_equipped boolean
+  equipped_to_character_id text
+  current_level integer
+  enhancement_level integer
+  custom_stats text
+  acquired_at timestamp without time zone
+  acquired_from text
+  purchase_price integer
+  created_at timestamp without time zone
+  updated_at timestamp without time zone
+}
+
+Table user_headquarters {
+  id uuid [pk]
+  user_id text [not null]
+  tier_id text
+  coins integer
+  gems integer
+  unlocked_themes jsonb
+  created_at timestamp without time zone
+  updated_at timestamp without time zone
+}
+
+Table user_items {
+  id uuid [pk]
+  user_id text [not null]
+  item_id text [not null]
+  quantity integer [not null]
+  acquired_at timestamp without time zone
+  acquired_from text
+}
+
+Table users {
+  id text [pk]
+  username text [not null]
+  email text [not null]
+  password_hash text
+  subscription_tier text
+  subscription_expires_at timestamp without time zone
+  level integer
+  experience integer
+  total_battles integer
+  total_wins integer
+  rating integer
+  daily_chat_count integer
+  daily_chat_reset_date text
+  daily_image_count integer
+  daily_image_reset_date text
+  daily_battle_count integer
+  daily_battle_reset_date text
+  daily_training_count integer
+  daily_training_reset_date text
+  character_slot_capacity integer
+  created_at timestamp without time zone
+  updated_at timestamp without time zone
+  lifetime_turn_count integer
+}
+
+// Relationships
+Ref: active_challenges.challenge_template_id > challenge_templates.id
+Ref: active_challenges.user_id > users.id
+Ref: battles.user1_id > users.id
+Ref: battles.user2_id > users.id
+Ref: battles.user_character1_id > user_characters.id
+Ref: battles.user_character2_id > user_characters.id
+Ref: battles.winner_id > users.id
+Ref: challenge_alliances.active_challenge_id > active_challenges.id
+Ref: challenge_alliances.leader_character_id > user_characters.id
+Ref: challenge_leaderboard.user_character_id > user_characters.id
+Ref: challenge_participants.active_challenge_id > active_challenges.id
+Ref: challenge_participants.user_character_id > user_characters.id
+Ref: challenge_results.active_challenge_id > active_challenges.id
+Ref: challenge_results.challenge_template_id > challenge_templates.id
+Ref: challenge_results.second_place_character_id > user_characters.id
+Ref: challenge_results.third_place_character_id > user_characters.id
+Ref: challenge_results.winner_character_id > user_characters.id
+Ref: challenge_rewards.challenge_template_id > challenge_templates.id
+Ref: character_abilities.character_id > user_characters.id
+Ref: character_experience_log.character_id > user_characters.id
+Ref: character_healing_sessions.character_id > user_characters.id
+Ref: character_healing_sessions.facility_id > healing_facilities.id
+Ref: character_living_context.character_id > characters.id
+Ref: character_memories.event_id > game_events.id
+Ref: character_progression.character_id > user_characters.id
+Ref: character_skills.character_id > user_characters.id
+Ref: chat_messages.battle_id > battles.id
+Ref: chat_messages.character_id > user_characters.id
+Ref: chat_messages.user_id > users.id
+Ref: claimable_pack_contents.character_id > characters.id
+Ref: claimable_pack_contents.claimable_pack_id > claimable_packs.id
+Ref: claimable_packs.claimed_by_user_id > users.id
+Ref: coach_progression.user_id > users.id
+Ref: coach_skills.user_id > users.id
+Ref: coach_xp_events.battle_id > battles.id
+Ref: coach_xp_events.character_id > user_characters.id
+Ref: coach_xp_events.user_id > users.id
+Ref: financial_decisions.user_character_id > user_characters.id
+Ref: headquarters_rooms.headquarters_id > user_headquarters.id
+Ref: purchases.user_id > users.id
+Ref: team_context.master_bed_character_id > characters.id
+Ref: user_characters.character_id > characters.id
+Ref: user_characters.user_id > users.id
+Ref: user_currency.user_id > users.id
+Ref: user_equipment.user_id > users.id
+Ref: user_headquarters.user_id > users.id
+Ref: user_items.item_id > items.id
+Ref: user_items.user_id > users.id

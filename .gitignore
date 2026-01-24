@@ -1,0 +1,57 @@
+# Dependencies
+/node_modules
+/backend/node_modules
+/shared/hex-engine/node_modules
+/.pnp
+.pnp.js
+
+# Build outputs
+/.next/
+/out/
+/build/
+/dist/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Other
+database.sqlite
+schemaspy_output/
+*.jar
+frontend/frontend.log
+
+tools/notebook/
+
+# System files
+.DS_Store
+**/.DS_Store
+
+# Archives
+*.zip
+
+# Markdown files
+# *.md  # TEMP DISABLED - re-enable after session
+
+# Chat logs
+new_chat_logs/
+
+
+# Misc temp files
+*.bak
+*_zip/
+power_occurrences.txt
+r_words.txt
+docs/catalyst_proposal_draft
+temp_assets/
+verified_assets/
+verified_assets_new/

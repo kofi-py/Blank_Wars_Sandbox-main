@@ -1,0 +1,390 @@
+BLANK WARS - CHARACTER STATS
+=============================
+Compiled for Card Creation Project
+Date: September 7, 2025
+
+===========================================
+ACHILLES - Hero of Troy
+===========================================
+Archetype: Warrior
+Rarity: Legendary
+Base Stats:
+- Health: 78
+- Attack: 20
+- Defense: 11
+- Speed: 16
+- Special: 8
+
+Detailed Abilities:
+- Strength: 95
+- Agility: 85
+- Intelligence: 60
+- Vitality: 90
+- Wisdom: 45
+- Charisma: 80
+
+Personality: Honorable, Wrathful, Courageous, Prideful
+Fighting Style: Noble and passionate
+Background: The greatest warrior of the Trojan War, nearly invincible in combat but driven by rage and honor.
+
+===========================================
+AGENT X - Mysterious Operative  
+===========================================
+Archetype: Assassin/Spy
+Rarity: Rare
+Base Stats:
+- Health: 50
+- Attack: 15
+- Defense: 9
+- Speed: 15
+- Special: 11
+
+Detailed Abilities:
+- Strength: 75
+- Agility: 92
+- Intelligence: 85
+- Vitality: 70
+- Wisdom: 80
+- Charisma: 60
+
+===========================================
+BILLY THE KID - Outlaw Gunslinger
+===========================================
+Archetype: Gunslinger
+Rarity: Uncommon
+Base Stats:
+- Health: 45
+- Attack: 13
+- Defense: 7
+- Speed: 16
+- Special: 7
+
+Detailed Abilities:
+- Strength: 65
+- Agility: 95
+- Intelligence: 55
+- Vitality: 60
+- Wisdom: 45
+- Charisma: 75
+
+===========================================
+CLEOPATRA VII - Last Pharaoh of Egypt
+===========================================
+Archetype: Leader
+Rarity: Epic
+Base Stats:
+- Health: 66
+- Attack: 14
+- Defense: 11
+- Speed: 14
+- Special: 11
+
+Detailed Abilities:
+- Strength: 50
+- Agility: 70
+- Intelligence: 95
+- Vitality: 80
+- Wisdom: 90
+- Charisma: 98
+
+Personality: Brilliant, Charismatic, Ambitious, Diplomatic
+Fighting Style: Regal and commanding
+Background: The brilliant and charismatic final pharaoh of Ancient Egypt, master of politics and ancient mysteries.
+
+===========================================
+COUNT DRACULA - Lord of the Undead
+===========================================
+Archetype: Mystic
+Rarity: Legendary
+Base Stats:
+- Health: 79
+- Attack: 20
+- Defense: 17
+- Speed: 16
+- Special: 9
+
+Detailed Abilities:
+- Strength: 85
+- Agility: 80
+- Intelligence: 75
+- Vitality: 90
+- Wisdom: 70
+- Charisma: 85
+
+Personality: Aristocratic, Cunning, Predatory, Charismatic
+Fighting Style: Elegant and menacing
+Background: The immortal vampire lord of Transylvania, master of dark magic and eternal night.
+
+===========================================
+FENRIR - The Wolf of Ragnarok
+===========================================
+Archetype: Beast
+Rarity: Legendary
+Base Stats:
+- Health: 127
+- Attack: 29
+- Defense: 13
+- Speed: 28
+- Special: 12
+
+Detailed Abilities:
+- Strength: 90
+- Agility: 95
+- Intelligence: 40
+- Vitality: 95
+- Wisdom: 30
+- Charisma: 50
+
+===========================================
+FRANKENSTEIN'S MONSTER - The Created Being
+===========================================
+Archetype: Tank
+Rarity: Rare
+Base Stats:
+- Health: 124
+- Attack: 18
+- Defense: 28
+- Speed: 3
+- Special: 5
+
+Detailed Abilities:
+- Strength: 98
+- Agility: 30
+- Intelligence: 65
+- Vitality: 98
+- Wisdom: 60
+- Charisma: 25
+
+===========================================
+GENGHIS KHAN - Great Khan
+===========================================
+Archetype: Leader
+Rarity: Legendary
+Base Stats:
+- Health: 72
+- Attack: 16
+- Defense: 11
+- Speed: 16
+- Special: 11
+
+Detailed Abilities:
+- Strength: 88
+- Agility: 80
+- Intelligence: 90
+- Vitality: 85
+- Wisdom: 85
+- Charisma: 92
+
+Personality: Ruthless, Strategic, Ambitious, Unifying
+Fighting Style: Commanding and direct
+Background: The Great Khan who united the Mongol tribes and built the largest contiguous empire in history.
+
+===========================================
+JOAN OF ARC - Maid of Orléans
+===========================================
+Archetype: Holy Warrior
+Rarity: Epic
+Base Stats:
+- Health: 66
+- Attack: 14
+- Defense: 11
+- Speed: 14
+- Special: 11
+
+Detailed Abilities:
+- Strength: 80
+- Agility: 75
+- Intelligence: 70
+- Vitality: 85
+- Wisdom: 90
+- Charisma: 95
+
+===========================================
+MERLIN - The Great Wizard
+===========================================
+Archetype: Wizard
+Rarity: Mythic
+Base Stats:
+- Health: 45
+- Attack: 5
+- Defense: 10
+- Speed: 9
+- Special: 43
+
+Detailed Abilities:
+- Strength: 30
+- Agility: 50
+- Intelligence: 98
+- Vitality: 70
+- Wisdom: 95
+- Charisma: 85
+
+===========================================
+ROBIN HOOD - The Outlaw of Sherwood
+===========================================
+Archetype: Archer
+Rarity: Rare
+Base Stats:
+- Health: 55
+- Attack: 13
+- Defense: 9
+- Speed: 16
+- Special: 9
+
+Detailed Abilities:
+- Strength: 70
+- Agility: 90
+- Intelligence: 75
+- Vitality: 70
+- Wisdom: 65
+- Charisma: 85
+
+===========================================
+SAMMY "SLUGGER" SULLIVAN - Baseball Hero
+===========================================
+Archetype: Athlete
+Rarity: Uncommon
+Base Stats:
+- Health: 60
+- Attack: 16
+- Defense: 9
+- Speed: 12
+- Special: 6
+
+Detailed Abilities:
+- Strength: 85
+- Agility: 80
+- Intelligence: 50
+- Vitality: 85
+- Wisdom: 55
+- Charisma: 75
+
+===========================================
+SHERLOCK HOLMES - Master Detective
+===========================================
+Archetype: Detective
+Rarity: Rare
+Base Stats:
+- Health: 50
+- Attack: 9
+- Defense: 8
+- Speed: 12
+- Special: 21
+
+Detailed Abilities:
+- Strength: 40
+- Agility: 60
+- Intelligence: 98
+- Vitality: 55
+- Wisdom: 85
+- Charisma: 70
+
+===========================================
+SPACE CYBORG - Technological Warrior
+===========================================
+Archetype: Cyborg
+Rarity: Epic
+Base Stats:
+- Health: 117
+- Attack: 17
+- Defense: 35
+- Speed: 5
+- Special: 7
+
+Detailed Abilities:
+- Strength: 90
+- Agility: 50
+- Intelligence: 80
+- Vitality: 95
+- Wisdom: 60
+- Charisma: 40
+
+===========================================
+SUN WUKONG - The Monkey King
+===========================================
+Archetype: Trickster
+Rarity: Mythic
+Base Stats:
+- Health: 70
+- Attack: 21
+- Defense: 11
+- Speed: 39
+- Special: 14
+
+Detailed Abilities:
+- Strength: 90
+- Agility: 98
+- Intelligence: 80
+- Vitality: 85
+- Wisdom: 75
+- Charisma: 80
+
+Personality: Mischievous, Rebellious, Loyal, Proud
+Fighting Style: Playful and irreverent
+Background: The immortal Monkey King, master of 72 transformations and legendary troublemaker of Heaven.
+
+===========================================
+NIKOLA TESLA - Master Inventor
+===========================================
+Archetype: Inventor
+Rarity: Epic
+Base Stats:
+- Health: 54
+- Attack: 10
+- Defense: 9
+- Speed: 21
+- Special: 11
+
+Detailed Abilities:
+- Strength: 45
+- Agility: 60
+- Intelligence: 98
+- Vitality: 65
+- Wisdom: 80
+- Charisma: 70
+
+===========================================
+ZETA RETICULAN (Zeta) - Alien Being
+===========================================
+Archetype: Alien
+Rarity: Rare
+Base Stats:
+- Health: 30
+- Attack: 5
+- Defense: 8
+- Speed: 11
+- Special: 28
+
+Detailed Abilities:
+- Strength: 35
+- Agility: 70
+- Intelligence: 95
+- Vitality: 50
+- Wisdom: 90
+- Charisma: 40
+
+===========================================
+
+NOTES FOR CARD CREATION:
+===========================================
+
+STAT EXPLANATION:
+- Base Stats are the primary combat stats used in battles
+- Detailed Abilities are the core character attributes that define their nature
+
+ARCHETYPE MEANINGS:
+- Warrior: Melee combat specialists
+- Leader: Command and inspire others  
+- Mystic: Magic and supernatural powers
+- Trickster: Agile and unpredictable
+- Beast: Raw physical power and instinct
+
+RARITY LEVELS (in order):
+1. Common (basic characters)
+2. Uncommon (Billy the Kid, Sam Spade)
+3. Rare (Agent X, Frankenstein, Robin Hood, Holmes, Zeta)
+4. Epic (Cleopatra, Joan of Arc, Space Cyborg, Tesla)
+5. Legendary (Achilles, Dracula, Fenrir, Genghis Khan)
+6. Mythic (Merlin, Sun Wukong) - highest tier
+
+All data from the latest game files - September 7, 2025.
