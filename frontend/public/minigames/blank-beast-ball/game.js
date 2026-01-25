@@ -238,13 +238,137 @@ let clock; // For animation timing
 let ballPhysics; // Ball physics manager
 let animalHazards; // Animal hazard manager
 let animationFrameId = null; // Track animation frame for cleanup
+let joystickInput = { x: 0, y: 0 }; // For mobile controls
+let activePointerId = null; // Track which touch is using the joystick
+let soundManager; // Audio manager
+
+// Player Dynamic Stats (calculated from base stats)
+let currentMoveSpeed = 0.15;
+let currentJumpForce = 0.5;
+let currentKnockbackResist = 1.0;
+let currentComboMult = 1.0;
+let particleSystem; // Visual effects
+let cameraShake = 0; // Screen shake intensity
 
 // Physics Constants
 const GRAVITY = -0.02;
 const JUMP_FORCE = 0.5;
-const MOVE_SPEED = 0.15; // Balanced speed for control
-const PLAYER_SIZE = 0.625; // Adjusted to match 2.5x Achilles model
+const MOVE_SPEED = 0.15;
+const PLAYER_SIZE = 0.625;
 const DEATH_Y = -10;
+
+// Audio Configuration
+const SOUNDS = {
+    jump: 'assets/sounds/jump.wav',
+    bounce_green: 'assets/sounds/bounce_low.mp3',
+    bounce_blue: 'assets/sounds/bounce_mid.mp3',
+    bounce_yellow: 'assets/sounds/bounce_high.mp3',
+    bounce_red: 'assets/sounds/bounce_ultra.mp3',
+    land: 'assets/sounds/land.mp3',
+    checkpoint: 'assets/sounds/checkpoint.mp3',
+    combo: 'assets/sounds/combo.mp3',
+    victory: 'assets/sounds/victory.mp3',
+    gameover: 'assets/sounds/gameover.mp3',
+    music_level1: 'assets/sounds/music_ocean.mp3',
+    music_level2: 'assets/sounds/music_volcano.mp3',
+    music_level3: 'assets/sounds/music_arctic.mp3'
+};
+
+class SoundManager {
+    constructor() {
+        this.sounds = {};
+        this.enabled = true;
+        this.music = null;
+        this.currentMusicPath = null;
+    }
+
+    play(name, pitch = 1) {
+        if (!this.enabled || !SOUNDS[name]) return;
+        
+        const audio = new Audio(SOUNDS[name]);
+        audio.playbackRate = pitch;
+        audio.volume = 0.5;
+        audio.play().catch(e => console.warn('Audio play failed:', e));
+    }
+
+    playMusic(name) {
+        if (this.currentMusicPath === SOUNDS[name]) return;
+        
+        if (this.music) {
+            this.music.pause();
+        }
+
+        if (!SOUNDS[name]) return;
+
+        this.music = new Audio(SOUNDS[name]);
+        this.music.loop = true;
+        this.music.volume = 0.15; // Lowered volume
+        this.currentMusicPath = SOUNDS[name];
+        
+        if (this.enabled) {
+            this.music.play().catch(e => console.warn('Music play failed:', e));
+        }
+    }
+
+    toggle() {
+        this.enabled = !this.enabled;
+        if (!this.enabled && this.music) {
+            this.music.pause();
+        } else if (this.enabled && this.music) {
+            this.music.play().catch(e => console.warn('Music play failed:', e));
+        }
+        return this.enabled;
+    }
+}
+
+class ParticleSystem {
+    constructor(scene) {
+        this.scene = scene;
+        this.particles = [];
+    }
+
+    createBurst(position, color, count = 10) {
+        const geometry = new THREE.SphereGeometry(0.1, 8, 8);
+
+        for (let i = 0; i < count; i++) {
+            const material = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 1 });
+            const particle = new THREE.Mesh(geometry, material);
+            particle.position.copy(position);
+            
+            const velocity = new THREE.Vector3(
+                (Math.random() - 0.5) * 0.2,
+                Math.random() * 0.3,
+                (Math.random() - 0.5) * 0.2
+            );
+            
+            this.particles.push({
+                mesh: particle,
+                velocity: velocity,
+                life: 1.0,
+                decay: 0.02 + Math.random() * 0.02
+            });
+            
+            this.scene.add(particle);
+        }
+    }
+
+    update() {
+        for (let i = this.particles.length - 1; i >= 0; i--) {
+            const p = this.particles[i];
+            p.mesh.position.add(p.velocity);
+            p.life -= p.decay;
+            p.mesh.material.opacity = p.life;
+            p.mesh.scale.setScalar(p.life);
+
+            if (p.life <= 0) {
+                this.scene.remove(p.mesh);
+                p.mesh.geometry.dispose();
+                p.mesh.material.dispose();
+                this.particles.splice(i, 1);
+            }
+        }
+    }
+}
 
 // Initialize
 function init() {
@@ -253,6 +377,14 @@ function init() {
     console.log('ModelLoader available:', typeof ModelLoader !== 'undefined');
     console.log('Document ready state:', document.readyState);
     console.log('Body exists:', !!document.body);
+
+    // Initialize sound manager
+    soundManager = new SoundManager();
+    console.log('✅ Sound manager initialized');
+
+    // Initialize particle system
+    particleSystem = new ParticleSystem(scene);
+    console.log('✅ Particle system initialized');
 
     // Initialize model loader
     if (typeof ModelLoader !== 'undefined') {
@@ -268,6 +400,7 @@ function init() {
         console.log('Starting character load after delay');
         loadCharacterCards();
         setupEventListeners();
+        setupMobileControls(); // Initialize mobile touch listeners
         console.log('=== INITIALIZATION COMPLETE ===');
     }, 100);
 }
@@ -291,7 +424,10 @@ function loadCharacterCards() {
             <div class="character-card" data-character-id="${char.id}">
                 <div class="char-avatar">${char.avatar}</div>
                 <h2>${char.name}</h2>
-                <p class="char-title">${char.title}</p>
+                <div class="char-stats">
+                    <div class="stat-row"><span>SPD</span><div class="stat-bar"><div class="stat-fill" style="width: ${char.baseStats.agility}%"></div></div></div>
+                    <div class="stat-row"><span>PWR</span><div class="stat-bar"><div class="stat-fill" style="width: ${char.baseStats.strength}%"></div></div></div>
+                </div>
                 <p class="char-archetype">${char.archetype} • ${char.rarity}</p>
             </div>
         `;
@@ -301,6 +437,112 @@ function loadCharacterCards() {
     container.innerHTML = cardsHTML;
 
     console.log(`Loaded ${Object.keys(BLANK_WARS_CHARACTERS).length} character cards`);
+}
+
+function setupMobileControls() {
+    console.log('Setting up mobile controls...');
+    const joystickContainer = document.getElementById('joystick-container');
+    const joystickHandle = document.getElementById('joystick-handle');
+    const btnJump = document.getElementById('btn-jump');
+    const btnQ = document.getElementById('btn-camera-q');
+    const btnE = document.getElementById('btn-camera-e');
+
+    if (!joystickContainer || !joystickHandle) return;
+
+    const maxDistance = 45; // Max radius for joystick handle movement
+
+    const handlePointer = (e) => {
+        if (gameState !== 'playing' && gameState !== 'ready') return;
+        
+        // Prevent default touch behavior (scrolling)
+        if (e.type.startsWith('touch')) e.preventDefault();
+
+        const rect = joystickContainer.getBoundingClientRect();
+        const centerX = rect.left + rect.width / 2;
+        const centerY = rect.top + rect.height / 2;
+
+        let clientX, clientY;
+        if (e.type.startsWith('touch')) {
+            const touch = e.touches[0] || e.changedTouches[0];
+            clientX = touch.clientX;
+            clientY = touch.clientY;
+        } else {
+            clientX = e.clientX;
+            clientY = e.clientY;
+        }
+
+        let deltaX = clientX - centerX;
+        let deltaY = clientY - centerY;
+
+        const distance = Math.min(Math.sqrt(deltaX * deltaX + deltaY * deltaY), maxDistance);
+        const angle = Math.atan2(deltaY, deltaX);
+
+        const moveX = Math.cos(angle) * distance;
+        const moveY = Math.sin(angle) * distance;
+
+        joystickHandle.style.transform = `translate(calc(-50% + ${moveX}px), calc(-50% + ${moveY}px))`;
+
+        // Normalize input for movement
+        joystickInput.x = moveX / maxDistance;
+        joystickInput.y = moveY / maxDistance;
+    };
+
+    const resetJoystick = () => {
+        joystickHandle.style.transform = 'translate(-50%, -50%)';
+        joystickInput.x = 0;
+        joystickInput.y = 0;
+        activePointerId = null;
+    };
+
+    joystickContainer.addEventListener('pointerdown', (e) => {
+        activePointerId = e.pointerId;
+        handlePointer(e);
+        joystickContainer.setPointerCapture(e.pointerId);
+    });
+
+    joystickContainer.addEventListener('pointermove', (e) => {
+        if (e.pointerId === activePointerId) {
+            handlePointer(e);
+        }
+    });
+
+    joystickContainer.addEventListener('pointerup', resetJoystick);
+    joystickContainer.addEventListener('pointercancel', resetJoystick);
+
+    // Action Buttons
+    if (btnJump) {
+        btnJump.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            if (gameState === 'playing') jump();
+            else if (gameState === 'ready') {
+                // Trigger the space event to start the game
+                const event = new KeyboardEvent('keydown', { code: 'Space' });
+                document.dispatchEvent(event);
+            }
+        });
+    }
+
+    if (btnQ) {
+        btnQ.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            keys['q'] = true;
+        });
+        btnQ.addEventListener('touchend', (e) => {
+            e.preventDefault();
+            keys['q'] = false;
+        });
+    }
+
+    if (btnE) {
+        btnE.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            keys['e'] = true;
+        });
+        btnE.addEventListener('touchend', (e) => {
+            e.preventDefault();
+            keys['e'] = false;
+        });
+    }
 }
 
 function setupEventListeners() {
@@ -408,6 +650,15 @@ function setupEventListeners() {
     }
 
     console.log('All event listeners setup complete');
+
+    // Volume toggle listener
+    const volumeToggle = document.getElementById('volume-toggle');
+    if (volumeToggle) {
+        volumeToggle.addEventListener('click', () => {
+            const enabled = soundManager.toggle();
+            volumeToggle.textContent = enabled ? '🔊' : '🔇';
+        });
+    }
 }
 
 // Make startGame globally accessible for inline onclick
@@ -449,7 +700,13 @@ async function startGame(characterId) {
         return;
     }
 
+    calculateStats(); // Apply stats before starting
     console.log('Selected character:', selectedCharacter);
+
+    // Play music based on level
+    if (selectedLevel === 1) soundManager.playMusic('music_level1');
+    else if (selectedLevel === 2) soundManager.playMusic('music_level2');
+    else if (selectedLevel === 3) soundManager.playMusic('music_level3');
 
     setupScene();
     await createPlayer(); // Wait for model to load
@@ -503,6 +760,33 @@ async function startGame(characterId) {
     console.log('=== GAME LOADED, WAITING FOR SPACE TO START ===');
     isGameStarting = false; // Game setup complete, allow new game starts
     animate();
+}
+
+function calculateStats() {
+    if (!selectedCharacter) return;
+    
+    const stats = selectedCharacter.baseStats;
+    
+    // Agility (0-100) affects speed and jump: 50 is baseline
+    // Range: 0.1 - 0.22 speed
+    currentMoveSpeed = 0.1 + (stats.agility / 100) * 0.12;
+    
+    // Range: 0.4 - 0.65 jump
+    currentJumpForce = 0.4 + (stats.agility / 100) * 0.25;
+    
+    // Strength affects knockback: higher is better (less knockback)
+    // Range: 0.5 (heavy) - 1.5 (light)
+    currentKnockbackResist = 1.5 - (stats.strength / 100) * 1.0;
+    
+    // Charisma affects combo multiplier
+    currentComboMult = 1.0 + (stats.charisma / 100) * 0.5;
+
+    console.log(`📊 Stats Applied for ${selectedCharacter.name}:`, {
+        speed: currentMoveSpeed.toFixed(3),
+        jump: currentJumpForce.toFixed(3),
+        knockbackResist: currentKnockbackResist.toFixed(3),
+        comboMult: currentComboMult.toFixed(3)
+    });
 }
 
 function setupScene() {
@@ -1047,7 +1331,8 @@ function createPendulumHammer(x, y, z, hammerWidth = 2, speed = 0.02, offset = 0
 
 function jump() {
     if (playerOnGround) {
-        playerVelocity.y = JUMP_FORCE;
+        soundManager.play('jump');
+        playerVelocity.y = currentJumpForce;
         playerOnGround = false;
         isPlayerJumping = true; // Player initiated a jump
 
@@ -1092,20 +1377,31 @@ function updatePlayer() {
     // Track if player is moving for animation
     let isMoving = false;
 
+    // Keyboard Movement
     if (keys['w'] || keys['arrowup']) {
-        player.position.add(forward.clone().multiplyScalar(MOVE_SPEED));
+        player.position.add(forward.clone().multiplyScalar(currentMoveSpeed));
         isMoving = true;
     }
     if (keys['s'] || keys['arrowdown']) {
-        player.position.add(forward.clone().multiplyScalar(-MOVE_SPEED));
+        player.position.add(forward.clone().multiplyScalar(-currentMoveSpeed));
         isMoving = true;
     }
     if (keys['a'] || keys['arrowleft']) {
-        player.position.add(right.clone().multiplyScalar(-MOVE_SPEED));
+        player.position.add(right.clone().multiplyScalar(-currentMoveSpeed));
         isMoving = true;
     }
     if (keys['d'] || keys['arrowright']) {
-        player.position.add(right.clone().multiplyScalar(MOVE_SPEED));
+        player.position.add(right.clone().multiplyScalar(currentMoveSpeed));
+        isMoving = true;
+    }
+
+    // Joystick Movement
+    if (Math.abs(joystickInput.x) > 0.1 || Math.abs(joystickInput.y) > 0.1) {
+        // joystickInput.y is forward/back, joystickInput.x is left/right
+        const moveVec = forward.clone().multiplyScalar(-joystickInput.y)
+            .add(right.clone().multiplyScalar(joystickInput.x));
+        
+        player.position.add(moveVec.multiplyScalar(currentMoveSpeed));
         isMoving = true;
     }
 
@@ -1134,10 +1430,26 @@ function updatePlayer() {
 
         if (ballCollision) {
             const bounceResult = ballPhysics.applyBounce(ballCollision, playerVelocity, performance.now() / 1000);
+            
+            // Play bounce sound based on ball type
+            soundManager.play(`bounce_${ballCollision.type}`);
+            
             playerOnGround = true;
 
             // Update combo UI
             document.getElementById('combo').textContent = `Combo: ${bounceResult.combo}x` + (bounceResult.isPerfect ? ' ⭐' : '');
+            if (bounceResult.combo > 1) soundManager.play('combo', 0.8 + bounceResult.combo * 0.1);
+
+            // Create particles
+            const particleColor = ballCollision.type === 'red' ? 0xff0000 : 
+                                ballCollision.type === 'yellow' ? 0xffff00 : 
+                                ballCollision.type === 'blue' ? 0x0000ff : 0x00ff00;
+            particleSystem.createBurst(player.position, particleColor, 15);
+            
+            // Screen shake
+            if (ballCollision.type === 'red') cameraShake = 0.5;
+            else if (ballCollision.type === 'yellow') cameraShake = 0.3;
+            else cameraShake = 0.15;
 
             // Position player on top of ball
             player.position.y = ballCollision.position.y + ballCollision.radius + PLAYER_SIZE / 2;
@@ -1180,7 +1492,13 @@ function updatePlayer() {
                 }
 
                 if (obstacle.label) {
+                    const oldCheckpoint = document.getElementById('checkpoint').textContent;
                     document.getElementById('checkpoint').textContent = `Checkpoint: ${obstacle.label}`;
+                    
+                    if (oldCheckpoint !== `Checkpoint: ${obstacle.label}`) {
+                        soundManager.play('checkpoint');
+                    }
+
                     if (obstacle.label === 'Finish') {
                         endGame(true);
                     }
@@ -1203,15 +1521,6 @@ function updatePlayer() {
         endGame(false, randomMessage);
     }
 
-    // Update camera to follow player
-    const cameraDistance = 15;
-    const cameraHeight = 13;
-    const cameraOffset = new THREE.Vector3(0, cameraHeight, cameraDistance);
-    cameraOffset.applyAxisAngle(new THREE.Vector3(0, 1, 0), player.rotation.y);
-    camera.position.x = player.position.x + cameraOffset.x;
-    camera.position.y = player.position.y + cameraOffset.y;
-    camera.position.z = player.position.z + cameraOffset.z;
-    camera.lookAt(player.position.x, player.position.y + 2, player.position.z);
 
     // Update timer
     currentTime = (Date.now() - startTime) / 1000;
@@ -1263,9 +1572,9 @@ function checkDangerousCollisions() {
                 knockbackForce = 1.5; // CHOMP! Strong sideways push from flying gator
             }
 
-            // Apply horizontal knockback
-            player.position.x += knockbackDir.x * knockbackForce;
-            player.position.z += knockbackDir.z * knockbackForce;
+            // Apply horizontal knockback (adjusted by strength)
+            player.position.x += knockbackDir.x * knockbackForce * currentKnockbackResist;
+            player.position.z += knockbackDir.z * knockbackForce * currentKnockbackResist;
 
             // Small upward bump
             if (playerVelocity.y < 0.2) {
@@ -1409,6 +1718,62 @@ function animate() {
 
     updatePlayer();
     updateObstacles();
+    updateCamera();
+
+    if (particleSystem) particleSystem.update();
+    
+    // Update camera shake
+    if (cameraShake > 0) {
+        camera.position.x += (Math.random() - 0.5) * cameraShake;
+        camera.position.y += (Math.random() - 0.5) * cameraShake;
+        camera.position.z += (Math.random() - 0.5) * cameraShake;
+        cameraShake *= 0.9;
+        if (cameraShake < 0.01) cameraShake = 0;
+    }
+
+    // Update timer
+    currentTime = (Date.now() - startTime) / 1000;
+    document.getElementById('timer').textContent = `Time: ${currentTime.toFixed(1)}s`;
+}
+
+function updateCamera() {
+    if (!player || !camera) return;
+
+    // Camera follow parameters
+    const cameraDistance = 12;
+    const cameraHeight = 8;
+    const LERP_FACTOR = 0.1;
+
+    // Calculate desired position
+    const desiredOffset = new THREE.Vector3(0, cameraHeight, cameraDistance);
+    desiredOffset.applyAxisAngle(new THREE.Vector3(0, 1, 0), player.rotation.y);
+    const targetPosition = player.position.clone().add(desiredOffset);
+
+    // Camera Collision Avoidance (simple raycast)
+    const raycaster = new THREE.Raycaster();
+    const direction = new THREE.Vector3().subVectors(targetPosition, player.position).normalize();
+    const distanceToTarget = player.position.distanceTo(targetPosition);
+    
+    raycaster.set(player.position, direction);
+    
+    // Check against platforms (obstacles)
+    const intersectObjects = obstacles.filter(o => o.type === 'platform').map(o => o.mesh);
+    const intersects = raycaster.intersectObjects(intersectObjects);
+
+    let finalPosition = targetPosition;
+    if (intersects.length > 0 && intersects[0].distance < distanceToTarget) {
+        // Pull camera in closer if something is blocking the view
+        const safeDistance = Math.max(2, intersects[0].distance * 0.9);
+        finalPosition = player.position.clone().add(direction.multiplyScalar(safeDistance));
+    }
+
+    // Smooth follow with lerp
+    camera.position.lerp(finalPosition, LERP_FACTOR);
+    
+    // Look at player with slight offset up
+    const lookTarget = player.position.clone();
+    lookTarget.y += 1.5;
+    camera.lookAt(lookTarget);
 }
 
 function endGame(won, message = '') {
@@ -1420,6 +1785,7 @@ function endGame(won, message = '') {
     const restartBtn = document.getElementById('restart-btn');
 
     if (won) {
+        soundManager.play('victory');
         resultTitle.textContent = '🏆 VICTORY! 🏆';
         resultMessage.textContent = `${selectedCharacter.name} conquered the course!`;
         finalTime.textContent = `Final Time: ${currentTime.toFixed(2)}s`;
@@ -1459,6 +1825,7 @@ function endGame(won, message = '') {
             }
         }
     } else {
+        soundManager.play('gameover');
         resultTitle.textContent = '💥 WIPEOUT! 💥';
         resultMessage.textContent = message || 'Better luck next time!';
         finalTime.textContent = `Survived: ${currentTime.toFixed(2)}s`;
