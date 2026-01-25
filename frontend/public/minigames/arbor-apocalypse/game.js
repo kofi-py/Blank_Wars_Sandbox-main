@@ -40,6 +40,310 @@ const getAvailableMeteorTypes = (level) => {
     return [0, 1, 2]; // 0 = Asteroid, 1 = Comet, 2 = Fire.glb
 };
 
+// Audio Configuration
+const SOUNDS = {
+    engine: 'assets/sounds/engine.mp3',
+    crash: 'assets/sounds/crash.mp3',
+    explosion: 'assets/sounds/explosion.mp3',
+    screech: 'assets/sounds/screech.mp3',
+    splash: 'assets/sounds/splash.mp3',
+    zombie: 'assets/sounds/zombie.mp3',
+    victory: 'assets/sounds/victory.mp3',
+    gameover: 'assets/sounds/gameover.mp3',
+    music_main: 'assets/sounds/music_main.mp3',
+    fire: 'assets/sounds/fire.mp3',
+    magnet: 'assets/sounds/magnet.mp3',
+    coin: 'assets/sounds/coin.mp3',
+    roar: 'assets/sounds/roar.mp3',
+    slowmo: 'assets/sounds/slowmo.mp3'
+};
+
+class SoundManager {
+    constructor() {
+        this.enabled = true;
+        this.music = null;
+        this.engineSound = null;
+    }
+
+    init() {
+        // Setup engine sound loop
+        this.engineSound = new Audio(SOUNDS.engine);
+        this.engineSound.loop = true;
+        this.engineSound.volume = 0;
+        
+        // Setup music
+        this.music = new Audio(SOUNDS.music_main);
+        this.music.loop = true;
+        this.music.volume = 0.2;
+
+        const volumeToggle = document.getElementById('volume-toggle');
+        if (volumeToggle) {
+            volumeToggle.addEventListener('click', () => {
+                this.enabled = !this.enabled;
+                volumeToggle.textContent = this.enabled ? '🔊' : '🔇';
+                this.updateVolume();
+            });
+        }
+    }
+
+    updateVolume() {
+        if (!this.enabled) {
+            if (this.music) this.music.pause();
+            if (this.engineSound) this.engineSound.pause();
+        } else {
+            if (this.music && gameState.isPlaying) this.music.play().catch(e => {});
+            if (this.engineSound && gameState.isPlaying) this.engineSound.play().catch(e => {});
+        }
+    }
+
+    play(name, pitch = 1, volume = 0.5) {
+        if (!this.enabled || !SOUNDS[name]) return;
+        const audio = new Audio(SOUNDS[name]);
+        audio.playbackRate = pitch;
+        audio.volume = volume;
+        audio.play().catch(e => {});
+    }
+
+    startEngine() {
+        if (this.enabled && this.engineSound) {
+            this.engineSound.play().catch(e => {});
+        }
+    }
+
+    stopEngine() {
+        if (this.engineSound) this.engineSound.pause();
+    }
+
+    updateEngine(speed) {
+        if (!this.enabled || !this.engineSound) return;
+        
+        // Map speed (typically -0.2 to 0.8) to volume and pitch
+        const absSpeed = Math.abs(speed);
+        this.engineSound.volume = 0.1 + (absSpeed * 0.4);
+        this.engineSound.playbackRate = 0.8 + (absSpeed * 1.5);
+    }
+
+    startMusic() {
+        if (this.enabled && this.music) {
+            this.music.play().catch(e => {});
+        }
+    }
+
+    stopMusic() {
+        if (this.music) this.music.pause();
+    }
+}
+
+const soundManager = new SoundManager();
+
+// Power-Up System
+const POWERUP_TYPES = {
+    water: { color: 0x00aaff, label: '💧 Water Tank', duration: 0 },
+    shield: { color: 0xffaa00, label: '🛡️ Shield', duration: 10000 },
+    boost: { color: 0x00ff00, label: '⚡ Nitro Boost', duration: 5000 },
+    magnet: { color: 0xff00ff, label: '🧲 Magnet', duration: 15000 },
+    slowmo: { color: 0x00ffff, label: '⏳ Slow-Mo', duration: 8000 }
+};
+
+class CoinManager {
+    constructor() {
+        this.coins = [];
+    }
+
+    spawn(zPos) {
+        const geo = new THREE.CylinderGeometry(0.5, 0.5, 0.1, 16);
+        const mat = new THREE.MeshStandardMaterial({ color: 0xffd700, metalness: 0.8, roughness: 0.2 });
+        const coin = new THREE.Mesh(geo, mat);
+        coin.rotation.x = Math.PI / 2;
+        coin.position.set((Math.random() - 0.5) * 10, 0.5, zPos);
+        scene.add(coin);
+        this.coins.push(coin);
+    }
+
+    update() {
+        for (let i = this.coins.length - 1; i >= 0; i--) {
+            const c = this.coins[i];
+            c.rotation.z += 0.05;
+
+            // Magnet effect
+            if (gameState.powerups.magnet > Date.now()) {
+                const dist = c.position.distanceTo(truck.position);
+                if (dist < 15) {
+                    c.position.lerp(truck.position, 0.1);
+                }
+            }
+
+            // Collection
+            if (c.position.distanceTo(truck.position) < 2.5) {
+                const now = Date.now();
+                if (now - gameState.lastCollectTime < 5000) {
+                    gameState.combo++;
+                } else {
+                    gameState.combo = 1;
+                }
+                gameState.lastCollectTime = now;
+                
+                const bonus = 5 * gameState.combo;
+                gameState.cash += bonus;
+                gameState.score += bonus * 10;
+                
+                if (gameState.combo > 1) showHint(`COMBO x${gameState.combo}! +$${bonus} 💰`, 1000);
+                
+                soundManager.play('coin', 1.0 + (gameState.combo * 0.1), 0.3);
+                scene.remove(c);
+                this.coins.splice(i, 1);
+                continue;
+            }
+
+            // Cleanup
+            if (c.position.z > truck.position.z + 50) {
+                scene.remove(c);
+                this.coins.splice(i, 1);
+            }
+        }
+    }
+    
+    clear() {
+        this.coins.forEach(c => scene.remove(c));
+        this.coins = [];
+    }
+}
+
+const coinManager = new CoinManager();
+
+class PowerUpManager {
+    constructor() {
+        this.activePowerUps = [];
+        this.spawnTimer = 0;
+    }
+
+    spawn(zPos) {
+        const typeKeys = Object.keys(POWERUP_TYPES);
+        const type = typeKeys[Math.floor(Math.random() * typeKeys.length)];
+        const config = POWERUP_TYPES[type];
+
+        const group = new THREE.Group();
+        
+        // Sphere model for now
+        const geo = new THREE.SphereGeometry(1, 16, 16);
+        const mat = new THREE.MeshPhongMaterial({ 
+            color: config.color,
+            emissive: config.color,
+            emissiveIntensity: 0.5,
+            transparent: true,
+            opacity: 0.8
+        });
+        const mesh = new THREE.Mesh(geo, mat);
+        group.add(mesh);
+
+        // Add a floating ring
+        const ringGeo = new THREE.TorusGeometry(1.5, 0.1, 8, 32);
+        const ring = new THREE.Mesh(ringGeo, mat);
+        ring.rotation.x = Math.PI / 2;
+        group.add(ring);
+
+        group.position.set((Math.random() - 0.5) * 8, 1, zPos);
+        group.userData = { type, config };
+        
+        scene.add(group);
+        this.activePowerUps.push(group);
+    }
+
+    update(speed) {
+        this.activePowerUps.forEach((p, index) => {
+            p.rotation.y += 0.05;
+            p.position.y = 1 + Math.sin(Date.now() * 0.005) * 0.2;
+
+            const dist = p.position.distanceTo(truck.position);
+            if (dist < 3) {
+                this.collect(p.userData.type);
+                scene.remove(p);
+                this.activePowerUps.splice(index, 1);
+                return;
+            }
+
+            if (p.position.z > truck.position.z + 50) {
+                scene.remove(p);
+                this.activePowerUps.splice(index, 1);
+            }
+        });
+    }
+
+    collect(type) {
+        console.log('Collected powerup:', type);
+        soundManager.play('victory', 1.5, 0.4); // Use victory sound for collect for now
+
+        if (type === 'water') {
+            this.applyWater();
+            showHint("Water tank deployed! Fires extinguished! 💧");
+        } else if (type === 'shield') {
+            gameState.powerups.shield = Date.now() + POWERUP_TYPES.shield.duration;
+            showHint("Shield active! Protecting your truck! 🛡️");
+        } else if (type === 'boost') {
+            gameState.powerups.boost = Date.now() + POWERUP_TYPES.boost.duration;
+            showHint("Nitro boost active! ⚡");
+        } else if (type === 'magnet') {
+            gameState.powerups.magnet = Date.now() + POWERUP_TYPES.magnet.duration;
+            soundManager.play('magnet', 1.0, 0.5);
+            showHint("Magnet active! Attracting scrap! 🧲");
+        } else if (type === 'slowmo') {
+            gameState.powerups.slowmo = Date.now() + POWERUP_TYPES.slowmo.duration;
+            soundManager.play('slowmo', 1.0, 0.6);
+            showHint("Slow-Motion engaged! ⏳");
+        }
+        this.updatePowerUpUI();
+    }
+
+    applyWater() {
+        console.log('🌊 APPLYING WATER TANK!');
+        let count = 0;
+        trees.forEach(tree => {
+            if (tree.userData.onFire || tree.userData.smoldering) {
+                tree.userData.onFire = false;
+                tree.userData.smoldering = false;
+                if (tree.userData.fireParticles) {
+                    tree.remove(tree.userData.fireParticles);
+                    tree.userData.fireParticles = null;
+                }
+                tree.traverse(child => {
+                    if (child.isMesh && child.material) {
+                        child.material.emissive = new THREE.Color(0x000000);
+                        child.material.emissiveIntensity = 0;
+                    }
+                });
+                count++;
+            }
+        });
+        gameState.treesOnFire = 0;
+        console.log(`✓ Put out ${count} fires!`);
+    }
+
+    updatePowerUpUI() {
+        const container = document.getElementById('powerup-display');
+        if (!container) return;
+        
+        let html = '';
+        const now = Date.now();
+        
+        if (gameState.powerups.shield > now) {
+            html += `<div class="hud-item" style="color: orange; margin-top: 5px;">🛡️ SHIELD: ${Math.ceil((gameState.powerups.shield - now)/1000)}s</div>`;
+        }
+        if (gameState.powerups.boost > now) {
+            html += `<div class="hud-item" style="color: lightgreen; margin-top: 5px;">⚡ BOOST: ${Math.ceil((gameState.powerups.boost - now)/1000)}s</div>`;
+        }
+        if (gameState.powerups.magnet > now) {
+            html += `<div class="hud-item" style="color: cyan; margin-top: 5px;">🧲 MAGNET: ${Math.ceil((gameState.powerups.magnet - now)/1000)}s</div>`;
+        }
+        if (gameState.powerups.slowmo > now) {
+            html += `<div class="hud-item" style="color: white; margin-top: 5px;">⏳ SLOW-MO: ${Math.ceil((gameState.powerups.slowmo - now)/1000)}s</div>`;
+        }
+        
+        container.innerHTML = html;
+    }
+}
+
+const powerUpManager = new PowerUpManager();
+
 // High score management
 const HIGH_SCORE_KEY = 'fieldStationHighScores';
 const getHighScores = () => {
@@ -72,8 +376,105 @@ const gameState = {
     score: 0,
     currentRoundScore: 0,
     totalTreeHealth: 1200, // 12 trees * 100 health each
-    startTime: 0
+    startTime: 0,
+    powerups: {
+        shield: 0,
+        boost: 0,
+        magnet: 0,
+        slowmo: 0
+    },
+    cameraShake: 0,
+    shownHints: new Set(),
+    combo: 0,
+    lastCollectTime: 0
 };
+
+const showHint = (text, duration = 3000) => {
+    const hintPanel = document.getElementById('hint-panel');
+    if (!hintPanel || gameState.shownHints.has(text)) return;
+    
+    gameState.shownHints.add(text);
+    hintPanel.textContent = text;
+    hintPanel.classList.remove('hidden');
+    
+    setTimeout(() => {
+        hintPanel.classList.add('hidden');
+    }, duration);
+};
+
+class ParticleSystem {
+    constructor() {
+        this.particles = [];
+    }
+
+    create(position, color, count = 10, type = 'explosive') {
+        for (let i = 0; i < count; i++) {
+            const size = type === 'smoke' ? 0.4 + Math.random() * 0.4 : 0.2 + Math.random() * 0.2;
+            const geo = new THREE.SphereGeometry(size, 8, 8);
+            const mat = new THREE.MeshBasicMaterial({ 
+                color: color, 
+                transparent: true, 
+                opacity: type === 'smoke' ? 0.4 : 1.0 
+            });
+            const p = new THREE.Mesh(geo, mat);
+            p.position.copy(position);
+
+            let velocity;
+            if (type === 'explosive') {
+                velocity = new THREE.Vector3(
+                    (Math.random() - 0.5) * 0.4,
+                    Math.random() * 0.4,
+                    (Math.random() - 0.5) * 0.4
+                );
+            } else if (type === 'smoke') {
+                velocity = new THREE.Vector3(
+                    (Math.random() - 0.5) * 0.1,
+                    0.1 + Math.random() * 0.1,
+                    0.2 + Math.random() * 0.1
+                );
+            } else if (type === 'trail') {
+                velocity = new THREE.Vector3(
+                    (Math.random() - 0.5) * 0.05,
+                    (Math.random() - 0.5) * 0.05,
+                    0.5 + Math.random() * 0.2
+                );
+            }
+
+            this.particles.push({
+                mesh: p,
+                velocity: velocity,
+                life: 1.0,
+                decay: 0.01 + Math.random() * 0.02,
+                type: type
+            });
+            scene.add(p);
+        }
+    }
+
+    update() {
+        for (let i = this.particles.length - 1; i >= 0; i--) {
+            const p = this.particles[i];
+            p.mesh.position.add(p.velocity);
+            p.life -= p.decay;
+            p.mesh.material.opacity = p.life * (p.type === 'smoke' ? 0.4 : 1.0);
+            
+            if (p.type === 'smoke') {
+                p.mesh.scale.setScalar(1 + (1 - p.life) * 2);
+            } else {
+                p.mesh.scale.setScalar(p.life);
+            }
+
+            if (p.life <= 0) {
+                scene.remove(p.mesh);
+                p.mesh.geometry.dispose();
+                p.mesh.material.dispose();
+                this.particles.splice(i, 1);
+            }
+        }
+    }
+}
+
+const particleSystem = new ParticleSystem();
 
 // Scene setup
 const scene = new THREE.Scene();
@@ -393,6 +794,38 @@ const createTruck = () => {
     const rightHeadlight = new THREE.Mesh(headlightGeometry, headlightMaterial);
     rightHeadlight.position.set(1, 1.2, -6.25);
     truckGroup.add(rightHeadlight);
+
+    // Indicators / Turn Signals
+    const indicatorGeo = new THREE.BoxGeometry(0.4, 0.2, 0.1);
+    const indicatorMat = new THREE.MeshStandardMaterial({ color: 0x442200, emissive: 0x000000 });
+    
+    const leftInd = new THREE.Mesh(indicatorGeo, indicatorMat.clone());
+    leftInd.position.set(-1.8, 0.8, -6.2);
+    truckGroup.add(leftInd);
+    truckGroup.userData.leftInd = leftInd;
+
+    const rightInd = new THREE.Mesh(indicatorGeo, indicatorMat.clone());
+    rightInd.position.set(1.8, 0.8, -6.2);
+    truckGroup.add(rightInd);
+    truckGroup.userData.rightInd = rightInd;
+
+    // Brake Lights
+    const brakeLightGeo = new THREE.BoxGeometry(0.6, 0.3, 0.1);
+    const brakeLightMat = new THREE.MeshStandardMaterial({ 
+        color: 0x550000, 
+        emissive: 0x000000,
+        emissiveIntensity: 1.0
+    });
+
+    const leftBrake = new THREE.Mesh(brakeLightGeo, brakeLightMat.clone());
+    leftBrake.position.set(-1.8, 1.2, 6.1);
+    truckGroup.add(leftBrake);
+    truckGroup.userData.leftBrake = leftBrake;
+
+    const rightBrake = new THREE.Mesh(brakeLightGeo, brakeLightMat.clone());
+    rightBrake.position.set(1.8, 1.2, 6.1);
+    truckGroup.add(rightBrake);
+    truckGroup.userData.rightBrake = rightBrake;
 
     // Wheels - bigger and more detailed
     const wheelGeometry = new THREE.CylinderGeometry(0.7, 0.7, 0.6, 16);
@@ -1508,6 +1941,9 @@ const init = () => {
     scene.add(truck);
     createTreesOnTruck();
 
+    // Initialize audio
+    soundManager.init();
+
     // Create horizon walls
     createHorizonWalls();
 
@@ -1556,9 +1992,16 @@ const startGame = () => {
     gameState.targetSpeed = difficulty.targetSpeed;
     gameState.speed = difficulty.targetSpeed;
 
-    // Update landscape theme for current level
-    regenerateHorizonWalls();
+    // Reset Hints for new game session if desired, or keep across rounds
+    // For now, let's keep them so they don't annoy experienced players
+    if (gameState.level === 1) {
+        showHint("Deliver 12 trees to complete the round! 🌳", 4000);
+    }
 
+    // Start Audio
+    soundManager.startMusic();
+    soundManager.startEngine();
+    
     startScreen.classList.add('hidden');
     endScreen.classList.add('hidden');
 
@@ -1625,6 +2068,14 @@ const startGame = () => {
     puddles.forEach(p => scene.remove(p));
     puddles.length = 0;
 
+    // Clear existing powerups
+    powerUpManager.activePowerUps.forEach(p => scene.remove(p));
+    powerUpManager.activePowerUps = [];
+    gameState.powerups.shield = 0;
+    gameState.powerups.boost = 0;
+    gameState.powerups.magnet = 0;
+    coinManager.clear();
+
     updateUI();
 };
 
@@ -1668,6 +2119,15 @@ const calculateScore = () => {
 
 const endGame = (isGameOver = false) => {
     gameState.isPlaying = false;
+    
+    soundManager.stopEngine();
+    soundManager.stopMusic();
+    
+    if (isGameOver) {
+        soundManager.play('gameover');
+    } else {
+        soundManager.play('victory');
+    }
 
     const treesDelivered = gameState.trees;
     const treeInfo = treeTypes[gameState.treeType];
@@ -1882,9 +2342,16 @@ const animate = () => {
     // Keyboard controls
     if (keys['arrowleft'] || keys['a']) {
         gameState.truckPosition -= moveSpeed;
+        if (truck.userData.leftInd) truck.userData.leftInd.material.emissive.setHex(0xffaa00);
+    } else {
+        if (truck.userData.leftInd) truck.userData.leftInd.material.emissive.setHex(0x000000);
     }
+    
     if (keys['arrowright'] || keys['d']) {
         gameState.truckPosition += moveSpeed;
+        if (truck.userData.rightInd) truck.userData.rightInd.material.emissive.setHex(0xffaa00);
+    } else {
+        if (truck.userData.rightInd) truck.userData.rightInd.material.emissive.setHex(0x000000);
     }
 
     // Virtual button controls (mobile)
@@ -1902,11 +2369,28 @@ const animate = () => {
     }
 
     // Speed controls - gas and brake (can go in reverse)
+    let speedLimit = 0.8;
+    if (gameState.powerups.boost > Date.now()) speedLimit = 1.2;
+
     if (keys['arrowup'] || keys['w'] || buttonState.gas) {
-        gameState.speed = Math.min(0.8, gameState.speed + 0.01); // Gas - accelerate
+        gameState.speed = Math.min(speedLimit, gameState.speed + 0.015); // Faster accel during boost
     } else if (keys['arrowdown'] || keys['s'] || buttonState.brake) {
+        if (gameState.speed > 0.4) {
+            soundManager.play('screech', 0.9 + Math.random() * 0.2, 0.3);
+        }
         gameState.speed = Math.max(-0.2, gameState.speed - 0.02); // Brake - can go into reverse
+        
+        // Activate brake lights
+        if (truck.userData.leftBrake) {
+            truck.userData.leftBrake.material.emissive.setHex(0xff0000);
+            truck.userData.rightBrake.material.emissive.setHex(0xff0000);
+        }
     } else {
+        // Deactivate brake lights
+        if (truck.userData.leftBrake) {
+            truck.userData.leftBrake.material.emissive.setHex(0x000000);
+            truck.userData.rightBrake.material.emissive.setHex(0x000000);
+        }
         // Gradually return to target speed
         if (gameState.speed < gameState.targetSpeed) {
             gameState.speed = Math.min(gameState.targetSpeed, gameState.speed + 0.005);
@@ -1915,9 +2399,25 @@ const animate = () => {
         }
     }
 
-    // Clamp truck position to road
+    // Truck position and movement
     gameState.truckPosition = Math.max(-4.5, Math.min(4.5, gameState.truckPosition));
     truck.position.x = gameState.truckPosition;
+
+    // Dust/Dirt trail if slightly off center
+    if (Math.abs(gameState.truckPosition) > 3.5 && gameState.speed > 0.1) {
+        particleSystem.create(
+            new THREE.Vector3(truck.position.x + (gameState.truckPosition > 0 ? 2 : -2), 0, truck.position.z + 4),
+            0x8b4513, 2, 'smoke'
+        );
+    }
+
+    // Nitro trail
+    if (gameState.powerups.boost > Date.now()) {
+        particleSystem.create(
+            new THREE.Vector3(truck.position.x, 1, truck.position.z + 6),
+            0x00ffff, 5, 'trail'
+        );
+    }
 
     // Track distance traveled
     gameState.distance += gameState.speed;
@@ -1927,11 +2427,33 @@ const animate = () => {
 
     // Camera follows truck
     camera.position.z = truck.position.z + 15;
+    
+    // Apply Screen Shake
+    if (gameState.cameraShake > 0) {
+        camera.position.x += (Math.random() - 0.5) * gameState.cameraShake;
+        camera.position.y += (Math.random() - 0.5) * gameState.cameraShake;
+        gameState.cameraShake *= 0.9;
+        if (gameState.cameraShake < 0.01) gameState.cameraShake = 0;
+    }
 
-    // Update horizon walls with current speed
-    updateHorizonWalls(gameState.speed);
+    // Time scale for slow-mo
+    const timeScale = gameState.powerups.slowmo > Date.now() ? 0.4 : 1.0;
+
+    // Movement and logic should be scaled by timeScale where appropriate
+    const scaledSpeed = gameState.speed * timeScale;
+    
+    // Update horizon walls with scaled speed
+    updateHorizonWalls(scaledSpeed);
+    
+    // Update engine sound (unaffected by slowmo for driver feel?)
+    soundManager.updateEngine(gameState.speed);
 
     // Move road segments to create infinite road
+    roadSegments.forEach(segment => {
+        // Use scaled Speed for relative movement if needed, but road is stationary
+        // only the truck and objects move. Road segments update based on camera.
+    });
+
     roadSegments.forEach(segment => {
         // When a segment is too far behind camera, move it ahead
         if (segment.position.z - camera.position.z > 20) {
@@ -1942,6 +2464,49 @@ const animate = () => {
             segment.position.z += 240;
         }
     });
+
+    // Update powerups
+    powerUpManager.update(gameState.speed);
+    powerUpManager.updatePowerUpUI();
+
+    // Update Particles
+    particleSystem.update();
+    
+    // Truck damage visualization
+    if (gameState.trees < 6) {
+        particleSystem.create(
+            new THREE.Vector3(truck.position.x, 2, truck.position.z - 4), 
+            0x444444, 1, 'smoke'
+        );
+    }
+    
+    // Level & Hazard Hints
+    if (gameState.level === 1 && gameState.distance > 500) showHint("Dodge traffic to keep your trees! 🚗");
+    if (gameState.level === 2) showHint("Meteors inbound! Dodge the red circles! ☄️");
+    if (gameState.level === 4) showHint("Monsters are appearing. Drive fast! 🐉");
+    if (gameState.treesOnFire > 0) showHint("Trees are on fire! Drive through puddles to douse them! 🌊");
+    
+    // Level-based Weather Effects
+    const theme = getLandscapeTheme(gameState.level);
+    if (theme === 'winter' || theme === 'arctic') {
+        particleSystem.create(new THREE.Vector3(truck.position.x + (Math.random()-0.5)*20, 10, truck.position.z - 20), 0xffffff, 2, 'smoke');
+    } else if (theme === 'volcanic') {
+        particleSystem.create(new THREE.Vector3(truck.position.x + (Math.random()-0.5)*20, 10, truck.position.z - 20), 0x555555, 2, 'smoke');
+    } else if (theme === 'coastal') {
+        // Occasional sea spray
+        if (Math.random() < 0.1) particleSystem.create(new THREE.Vector3(15, 0, truck.position.z - 10), 0xaaddff, 5, 'explosive');
+    }
+    
+    // Spawn powerups
+    if (Math.random() < 0.005) { // Roughly every few seconds
+        powerUpManager.spawn(truck.position.z - 60);
+    }
+    
+    // Spawn coins
+    if (Math.random() < 0.05) {
+        coinManager.spawn(truck.position.z - 60);
+    }
+    coinManager.update();
 
     // Spawn traffic using difficulty config
     const difficulty = getDifficultyConfig(gameState.level);
@@ -1975,6 +2540,8 @@ const animate = () => {
     }
 
     trafficCars.forEach((car, index) => {
+        const carTimeScale = car.userData.spinning ? 1.0 : timeScale; // Spinning is always fast
+        
         // If car is destroyed, make it spin off dramatically
         if (car.userData.spinning) {
             car.position.add(car.userData.spinVelocity);
@@ -2003,7 +2570,7 @@ const animate = () => {
                 }
             } else {
                 // Normal traffic movement - cars move at their own random speed
-                car.position.z -= car.userData.speed;
+                car.position.z -= car.userData.speed * timeScale;
             }
         }
 
@@ -2013,6 +2580,7 @@ const animate = () => {
 
         if (dx < 2.5 && dz < 6 && !car.userData.hit) {
             car.userData.hit = true;
+            gameState.combo = 0; // Break combo on hit
 
             // Bumper car physics - push truck sideways
             if (truck.position.x < car.position.x) {
@@ -2050,13 +2618,21 @@ const animate = () => {
                         0.15,
                         (Math.random() - 0.5) * 0.1
                     );
-                    gameState.trees--;
-                    console.log(demonKnockedOff ? '💥 Knocked off demon BUT still lost a tree!' : '💥 Hit car, lost a tree');
-                }
+            gameState.trees--;
+            console.log(demonKnockedOff ? '💥 Knocked off demon BUT still lost a tree!' : '💥 Hit car, lost a tree');
+            
+            // Play crash sound
+            if (gameState.powerups.shield < Date.now()) {
+                soundManager.play('crash', 0.8 + Math.random() * 0.4);
+                gameState.cameraShake = 0.5;
+                particleSystem.create(truck.position, 0x888888, 20); // Metal sparks/debris
             } else {
-                console.log('💥 Knocked off demon, saved the trees!');
+                console.log('🛡️ SHIELD BLOCKED COLLISION DAMAGE!');
+                soundManager.play('splash', 2.0); // Shield clink sound placeholder
+                gameState.cameraShake = 0.2;
             }
         }
+    }
 
         // Apply hit velocity
         if (car.userData.hitVelocity) {
@@ -2089,6 +2665,7 @@ const animate = () => {
             console.log('Spawning monster:', randomType, 'at position', monster.position.x, monster.position.y, monster.position.z, 'Truck at:', truck.position.z);
             monsters.push(monster);
             scene.add(monster);
+            soundManager.play('roar', 0.8 + Math.random() * 0.4, 0.4);
         }
     }
 
@@ -2109,10 +2686,11 @@ const animate = () => {
                 scene.add(zombie);
             }
         }
+        soundManager.play('zombie', 0.8 + Math.random() * 0.4, 0.4);
     }
 
     meteors.forEach((meteor, index) => {
-        meteor.position.add(meteor.userData.velocity);
+        meteor.position.add(meteor.userData.velocity.clone().multiplyScalar(timeScale));
         // Meteors fall from sky - no road movement needed
 
         // Orient meteor to point in direction of travel (like a comet)
@@ -2146,6 +2724,10 @@ const animate = () => {
             if (carDist < 5 && meteor.position.y < 6) { // Larger hitbox for better collision
                 car.userData.destroyed = true;
                 car.userData.spinning = true;
+                
+                soundManager.play('explosion', 0.7 + Math.random() * 0.3, 0.6);
+                gameState.cameraShake = 1.0;
+                particleSystem.create(car.position, 0xff4500, 30);
 
                 // MASSIVE impact velocity - meteor hits at 45 degrees!
                 const impactDirection = meteor.userData.velocity.clone().normalize();
@@ -2212,6 +2794,7 @@ const animate = () => {
                 const distance = meteor.position.distanceTo(treeWorldPos);
                 // 3-TIER FIRE SYSTEM
                 if (distance < 4) {
+                    soundManager.play('explosion', 0.5 + Math.random() * 0.5, 0.4);
                     // TIER 1: Direct hit (< 1.5m) - Instant death + fire
                     if (distance < 1.5) {
                         tree.userData.health = 0;
@@ -2250,6 +2833,7 @@ const animate = () => {
                             tree.userData.onFire = true;
                             gameState.treesOnFire++;
                             console.log('🔥 Tree caught fire from close meteor! Has', tree.userData.health, 'health');
+                            soundManager.play('fire', 0.8 + Math.random() * 0.4, 0.3);
 
                             const fire = createFireParticles();
                             tree.userData.fireParticles = fire;
@@ -2918,6 +3502,7 @@ const animate = () => {
             // Create splash effect when truck drives through
             if (!puddle.userData.splashing) {
                 puddle.userData.splashing = true;
+                soundManager.play('splash', 0.9 + Math.random() * 0.2);
 
                 // Create water splash particles
                 for (let i = 0; i < 30; i++) {
