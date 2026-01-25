@@ -2606,33 +2606,43 @@ const animate = () => {
                 }
             });
 
-            // Damage random trees (only if no demon was knocked off, or 50% chance if demon was knocked off)
-            if (!demonKnockedOff || Math.random() < 0.5) {
-                const healthyTrees = trees.filter(t => t.userData.health > 0);
-                if (healthyTrees.length > 0) {
-                    const randomTree = healthyTrees[Math.floor(Math.random() * healthyTrees.length)];
-                    randomTree.userData.health = 0;
-                    randomTree.userData.falling = true;
-                    randomTree.userData.fallVelocity = new THREE.Vector3(
-                        (Math.random() - 0.5) * 0.2,
-                        0.15,
-                        (Math.random() - 0.5) * 0.1
-                    );
-            gameState.trees--;
-            console.log(demonKnockedOff ? '💥 Knocked off demon BUT still lost a tree!' : '💥 Hit car, lost a tree');
-            
-            // Play crash sound
-            if (gameState.powerups.shield < Date.now()) {
-                soundManager.play('crash', 0.8 + Math.random() * 0.4);
-                gameState.cameraShake = 0.5;
-                particleSystem.create(truck.position, 0x888888, 20); // Metal sparks/debris
-            } else {
+            // Shield protection
+            if (gameState.powerups.shield > Date.now()) {
                 console.log('🛡️ SHIELD BLOCKED COLLISION DAMAGE!');
                 soundManager.play('splash', 2.0); // Shield clink sound placeholder
                 gameState.cameraShake = 0.2;
+            } else {
+                // Damage trees (only if no demon was knocked off, or 50% chance if demon was knocked off)
+                if (!demonKnockedOff || Math.random() < 0.5) {
+                    const healthyTrees = trees.filter(t => t.userData.health > 0);
+                    if (healthyTrees.length > 0) {
+                        const randomTree = healthyTrees[Math.floor(Math.random() * healthyTrees.length)];
+                        randomTree.userData.health = 0;
+                        randomTree.userData.falling = true;
+                        randomTree.userData.fallVelocity = new THREE.Vector3(
+                            (Math.random() - 0.5) * 0.2,
+                            0.15,
+                            (Math.random() - 0.5) * 0.1
+                        );
+                        gameState.trees--;
+                        console.log(demonKnockedOff ? '💥 Knocked off demon BUT still lost a tree!' : '💥 Hit car, lost a tree');
+                    }
+                } else {
+                    console.log('💥 Knocked off demon, saved the trees!');
+                }
+                
+                // Play crash effects
+                soundManager.play('crash', 0.8 + Math.random() * 0.4);
+                gameState.cameraShake = 0.5;
+                particleSystem.create(truck.position, 0x888888, 20); // Metal sparks/debris
             }
+        } else if (dx < 4 && dz < 8 && !car.userData.nearMiss && !car.userData.hit) {
+            // Near miss bonus
+            car.userData.nearMiss = true;
+            gameState.score += 100;
+            showHint("Near Miss! +100 pts 🏎️", 1000);
+            soundManager.play('screech', 2.0, 0.1);
         }
-    }
 
         // Apply hit velocity
         if (car.userData.hitVelocity) {
