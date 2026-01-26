@@ -43,6 +43,11 @@ class BallPhysicsManager {
         this.lastBallContact = null;
         this.lastContactTime = 0;
         this.comboCount = 0;
+        this.charismaMult = 1.0; // Character charisma multiplier for combo bonuses
+    }
+
+    setCharismaMult(mult) {
+        this.charismaMult = mult;
     }
 
     createBall(position, type = 'blue', radius = 1) {
@@ -116,6 +121,13 @@ class BallPhysicsManager {
             this.comboCount = 0;
         }
 
+        // Apply charisma multiplier to combo bonus (higher charisma = bigger combo boost)
+        // Each combo level adds extra bounce height based on charisma
+        if (this.comboCount > 0) {
+            const comboBonus = this.comboCount * 0.05 * this.charismaMult;
+            bounceForce += comboBonus;
+        }
+
         // Apply bounce to player velocity
         playerVelocity.y = bounceForce;
 
@@ -129,7 +141,8 @@ class BallPhysicsManager {
         return {
             bounceForce: bounceForce,
             isPerfect: isPerfectBounce,
-            combo: this.comboCount
+            combo: this.comboCount,
+            charismaBonusApplied: this.comboCount > 0 ? this.comboCount * 0.05 * this.charismaMult : 0
         };
     }
 

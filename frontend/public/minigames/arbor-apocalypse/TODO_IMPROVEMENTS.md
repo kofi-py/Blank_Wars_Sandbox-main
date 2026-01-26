@@ -1,33 +1,45 @@
-# Arbor Apocalypse - Improvements TODO
+# Arbor Apocalypse - Improvements Status
 
-## Priority: HIGH
+## COMPLETED
 
-### 1. Add Sound Effects & Music
-- [ ] Engine sound (revving based on speed)
-- [ ] Tire screech on sharp turns
-- [ ] Crash/collision sounds
-- [ ] Meteor impact explosion
-- [ ] Fire crackling when trees burn
-- [ ] Water splash through puddles
-- [ ] Zombie growls
-- [ ] Monster roars
-- [ ] Background music per theme/level
-- [ ] Victory jingle
-- [ ] Game over sound
-- [ ] Add mute/volume controls
+### 1. Sound Effects & Music ✅
+- [x] Engine sound (loops based on game state)
+- [x] Crash/collision sounds
+- [x] Explosion sounds (meteor impact)
+- [x] Fire crackling
+- [x] Water splash through puddles
+- [x] Zombie growls
+- [x] Monster roars
+- [x] Background music
+- [x] Victory fanfare
+- [x] Game over sound
+- [x] Magnet, coin, slow-mo sounds
+- [x] Volume toggle button in HUD
+- [x] SoundManager class with enable/disable
 
-### 2. Power-Up System
-- [ ] Water tank power-up (instantly extinguish all fires)
-- [ ] Speed boost (temporary speed increase)
-- [ ] Shield (temporary invincibility)
-- [ ] Magnet (attract coins/bonuses)
-- [ ] Slow-mo (slow down hazards temporarily)
-- [ ] Visual indicators for active power-ups
-- [ ] Power-up spawn system on road
+### 2. Power-Up System ✅
+- [x] Shield (temporary invincibility from collisions)
+- [x] Speed Boost (increased speed limit to 1.2)
+- [x] Magnet (attract coins automatically)
+- [x] Slow-Mo (hazards move at 0.4x speed)
+- [x] Visual indicators for active power-ups (timer countdown)
+- [x] Power-up spawn system on road
+- [x] PowerUpManager class
+- [x] Power-up UI display (#powerup-display)
+- [x] Hint panel for first-time tips
 
-## Priority: MEDIUM
+### 3. Mobile Controls ✅
+- [x] Touch controls overlay
+- [x] Virtual steering buttons (Left/Right)
+- [x] Gas and Brake buttons
+- [x] Mobile detection and auto-show
+- [x] Touch-friendly button sizing
 
-### 3. Enhanced Particle Effects
+---
+
+## Priority: MEDIUM (Future Work)
+
+### 4. Enhanced Particle Effects
 - [ ] Better fire particles (more realistic flames)
 - [ ] Smoke trail from burning trees
 - [ ] Meteor trail effects
@@ -36,13 +48,13 @@
 - [ ] Rain particles in certain levels
 - [ ] Sparks on collision
 
-### 4. Tutorial/First-Time Player Experience
+### 5. Tutorial/First-Time Player Experience
+- [x] On-screen hints via hint-panel (partial)
 - [ ] Optional tutorial level
-- [ ] On-screen hints for first few hazards
 - [ ] Practice mode without scoring
-- [ ] Gradual difficulty introduction
+- [ ] Gradual difficulty introduction walkthrough
 
-### 5. Visual Polish
+### 6. Visual Polish
 - [ ] Improve horizon wall graphics
 - [ ] Add more environmental details (buildings, signs)
 - [ ] Weather effects (rain, fog, sandstorm)
@@ -50,23 +62,25 @@
 - [ ] Better truck damage visualization
 - [ ] Rearview mirror showing hazards behind
 
-## Priority: LOW
+---
 
-### 6. Backend Integration
+## Priority: LOW (Future Work)
+
+### 7. Backend Integration
 - [ ] Global leaderboards via Blank Wars API
 - [ ] Player profiles and statistics
 - [ ] Daily challenges
 - [ ] Achievement system
 - [ ] Unlock new trucks/tree types
 
-### 7. Additional Content
+### 8. Additional Content
 - [ ] More tree types with unique properties
 - [ ] Different truck models
 - [ ] Boss levels (giant meteor, mega zombie)
 - [ ] Endless mode
 - [ ] Time trial mode
 
-### 8. Gameplay Refinements
+### 9. Gameplay Refinements
 - [ ] Combo system for consecutive deliveries
 - [ ] Near-miss bonus points
 - [ ] Draft mechanic (following other vehicles)
@@ -75,16 +89,21 @@
 
 ---
 
-## Files to Modify
-- `game.js` - Main game logic, power-ups, sounds
-- `index.html` - Volume controls, tutorial UI
-- `landscape-themes.js` - Enhanced themes, weather
+## Files Reference
+- `game.js` - Main game logic, SoundManager, PowerUpManager
+- `index.html` - UI with volume toggle, powerup display, hint panel, mobile controls
+- `landscape-themes.js` - Level themes and landscape generation
+- `assets/sounds/` - All 14 sound effect files
 
-## Resources Needed
-- Sound effects library
-- Background music tracks
-- Power-up icons/sprites
-- Additional 3D models (power-ups, new hazards)
+## Power-Up Types (Reference)
+```javascript
+POWERUP_TYPES = {
+    shield: { duration: 5000, color: 0xFFA500, emoji: '🛡️' },
+    boost: { duration: 4000, color: 0x00FF00, emoji: '⚡' },
+    magnet: { duration: 8000, color: 0x00FFFF, emoji: '🧲' },
+    slowmo: { duration: 6000, color: 0xFFFFFF, emoji: '⏳' }
+}
+```
 
 ## Current Hazard System (Reference)
 ```javascript

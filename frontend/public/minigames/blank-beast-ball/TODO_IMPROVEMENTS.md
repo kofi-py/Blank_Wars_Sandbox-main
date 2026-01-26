@@ -1,42 +1,37 @@
-# Blank Beast Ball - Improvements TODO
+# Blank Beast Ball - Improvements Status
 
-## Priority: HIGH
+## COMPLETED
 
-### 1. Add Mobile Touch Controls
-- [ ] Create touch control overlay (similar to Arbor Apocalypse)
-- [ ] Add virtual joystick for movement (WASD replacement)
-- [ ] Add jump button for SPACE
-- [ ] Add camera rotation buttons for Q/E
-- [ ] Detect mobile device and show controls automatically
-- [ ] Test on various screen sizes
+### 1. Mobile Touch Controls ✅
+- [x] Created touch control overlay
+- [x] Virtual joystick for movement (WASD replacement)
+- [x] Jump button for SPACE
+- [x] Camera rotation buttons for Q/E
+- [x] Mobile detection via CSS media queries (≤1024px)
+- [x] Tested responsive design
 
-### 2. Add Sound Effects & Music
-- [ ] Background music for each level theme (Ocean, Volcano, Arctic)
-- [ ] Ball bounce sounds (different pitch for each color)
-- [ ] Jump sound effect
-- [ ] Landing sound effect
-- [ ] Combo achievement sound
-- [ ] Checkpoint reached sound
-- [ ] Victory/Game Over music
-- [ ] Add volume controls
+### 2. Sound Effects & Music ✅
+- [x] Background music for each level (Ocean, Volcano, Arctic)
+- [x] Ball bounce sounds (4 types: low, mid, high, ultra)
+- [x] Jump sound effect
+- [x] Landing sound effect
+- [x] Combo achievement sound
+- [x] Checkpoint reached sound
+- [x] Victory/Game Over sounds
+- [x] Volume toggle button in HUD
 
-## Priority: MEDIUM
+### 3. Character Stats Affect Gameplay ✅
+Stats are now fully integrated:
+- [x] `agility` → Movement speed (0.1 - 0.22 range)
+- [x] `agility` → Jump height (0.4 - 0.65 range)
+- [x] `strength` → Knockback resistance
+- [x] `charisma` → Combo bonus multiplier (integrated into ball-physics.js)
+- [x] Stats displayed on character select cards
+- [x] Console logging of applied stats
 
-### 3. Make Character Stats Affect Gameplay
-Current stats are defined but unused:
-- `strength` - Could affect push/knockback resistance
-- `agility` - Should affect movement speed and jump height
-- `intelligence` - Could affect combo multiplier
-- `vitality` - Could affect fall damage tolerance
-- `wisdom` - Could show ball colors from further away
-- `charisma` - Could affect score multiplier
+---
 
-Implementation:
-- [ ] Create stat modifier system
-- [ ] Apply agility to movement speed
-- [ ] Apply agility to jump height
-- [ ] Add stat display on character select screen
-- [ ] Balance gameplay with stat differences
+## Priority: MEDIUM (Future Work)
 
 ### 4. Improve Camera System
 - [ ] Smoother camera follow with lerping
@@ -51,7 +46,9 @@ Implementation:
 - [ ] Screen shake on big bounces
 - [ ] Color flash when hitting different ball types
 
-## Priority: LOW
+---
+
+## Priority: LOW (Future Work)
 
 ### 6. Level Design Enhancements
 - [ ] Moving platforms
@@ -74,14 +71,14 @@ Implementation:
 
 ---
 
-## Files to Modify
-- `game.js` - Main game logic, controls, stats
-- `index.html` - Add mobile control HTML elements
-- `style.css` - Style mobile controls
-- `ball-physics.js` - May need adjustments for stat-based physics
-- `level2.js`, `level3.js` - Level-specific enhancements
+## Files Modified
+- `game.js` - Character stats integration, charisma mult passed to ball physics
+- `ball-physics.js` - Added `setCharismaMult()` and combo bonus calculation
+- `index.html` - Mobile controls HTML, version bumped to v=59
+- `style.css` - Mobile control styling
 
-## Resources Needed
-- Sound effects (free from freesound.org or similar)
-- Background music (royalty-free)
-- Particle textures (can generate procedurally)
+## Characters (16 total)
+Achilles, Merlin, Cleopatra, Holmes, Dracula, Joan of Arc, Sun Wukong, Robin Hood,
+Frankenstein, Medusa, Hades, Morrigan, Anubis, Valkyrie, Loki, Athena
+
+Each character has unique stats that meaningfully affect gameplay!

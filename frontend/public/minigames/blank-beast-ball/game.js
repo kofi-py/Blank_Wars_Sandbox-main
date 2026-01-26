@@ -893,6 +893,11 @@ function createObstacleCourse() {
     // Initialize ball physics system
     ballPhysics = new BallPhysicsManager();
 
+    // Apply character charisma multiplier to ball physics for combo bonuses
+    if (currentComboMult) {
+        ballPhysics.setCharismaMult(currentComboMult);
+    }
+
     // ANIMAL BALL RUN - Snaking Wide Course
     // Starting platform (center)
     createPlatform(0, 0, 0, 12, 0.5, 12, 0x228B22, 'Start');
