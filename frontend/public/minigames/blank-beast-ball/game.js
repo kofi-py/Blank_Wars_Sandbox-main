@@ -1789,6 +1789,17 @@ function endGame(won, message = '') {
     const finalTime = document.getElementById('final-time');
     const restartBtn = document.getElementById('restart-btn');
 
+    // Also submit to backend leaderboard (only if they won or reached a good milestone)
+    // For Beast Ball, score issurvived time + bonus
+    const finalScore = Math.floor(currentTime * 10);
+    submitScoreToBackend({
+        score: finalScore,
+        won: won,
+        level: selectedLevel,
+        character: selectedCharacter.id,
+        time: currentTime
+    });
+
     if (won) {
         soundManager.play('victory');
         resultTitle.textContent = '🏆 VICTORY! 🏆';
@@ -1847,6 +1858,39 @@ function endGame(won, message = '') {
 
     showScreen('gameover');
 }
+
+const submitScoreToBackend = async (scoreData) => {
+    try {
+        console.log('📤 Submitting score to backend:', scoreData);
+        // Attempt to call the API
+        const response = await fetch('/api/minigames/score', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                minigame_name: 'blank-beast-ball',
+                score: scoreData.score,
+                metadata: {
+                    level: scoreData.level,
+                    character: scoreData.character,
+                    won: scoreData.won,
+                    time: scoreData.time
+                }
+            })
+        });
+        
+        const result = await response.json();
+        if (result.success) {
+            console.log('✅ Score submitted successfully!');
+        } else {
+            console.warn('❌ Failed to submit score:', result.error);
+        }
+    } catch (error) {
+        console.error('❌ Error submitting score to backend:', error);
+    }
+};
+
 
 function showScreen(screenName) {
     document.querySelectorAll('.screen').forEach(screen => {

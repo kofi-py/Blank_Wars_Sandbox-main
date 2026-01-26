@@ -357,8 +357,46 @@ const saveHighScore = (scoreData) => {
     scores.sort((a, b) => b.score - a.score);
     const topScores = scores.slice(0, 10); // Keep top 10
     localStorage.setItem(HIGH_SCORE_KEY, JSON.stringify(topScores));
+    
+    // Also submit to backend leaderboard
+    submitScoreToBackend(scoreData);
+    
     return topScores;
 };
+
+const submitScoreToBackend = async (scoreData) => {
+    try {
+        console.log('📤 Submitting score to backend:', scoreData);
+        // Attempt to get user token from cookie or local storage if needed
+        // For now, assuming the user is already authenticated in the browser session
+        const response = await fetch('/api/minigames/score', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                minigame_name: 'arbor-apocalypse',
+                score: scoreData.score,
+                metadata: {
+                    level: scoreData.level,
+                    cash: scoreData.cash,
+                    trees: scoreData.trees,
+                    date: scoreData.date
+                }
+            })
+        });
+        
+        const result = await response.json();
+        if (result.success) {
+            console.log('✅ Score submitted successfully!');
+        } else {
+            console.warn('❌ Failed to submit score:', result.error);
+        }
+    } catch (error) {
+        console.error('❌ Error submitting score to backend:', error);
+    }
+};
+
 
 // Game state
 const gameState = {
@@ -409,12 +447,22 @@ class ParticleSystem {
 
     create(position, color, count = 10, type = 'explosive') {
         for (let i = 0; i < count; i++) {
-            const size = type === 'smoke' ? 0.4 + Math.random() * 0.4 : 0.2 + Math.random() * 0.2;
+            let size = 0.2 + Math.random() * 0.2;
+            let matOpacity = 1.0;
+            
+            if (type === 'smoke') {
+                size = 0.4 + Math.random() * 0.4;
+                matOpacity = 0.4;
+            } else if (type === 'fire') {
+                size = 0.3 + Math.random() * 0.3;
+                color = new THREE.Color().setHSL(0.05 + Math.random() * 0.1, 1.0, 0.5); // Red-Orange
+            }
+            
             const geo = new THREE.SphereGeometry(size, 8, 8);
             const mat = new THREE.MeshBasicMaterial({ 
                 color: color, 
                 transparent: true, 
-                opacity: type === 'smoke' ? 0.4 : 1.0 
+                opacity: matOpacity 
             });
             const p = new THREE.Mesh(geo, mat);
             p.position.copy(position);
@@ -422,15 +470,21 @@ class ParticleSystem {
             let velocity;
             if (type === 'explosive') {
                 velocity = new THREE.Vector3(
-                    (Math.random() - 0.5) * 0.4,
-                    Math.random() * 0.4,
-                    (Math.random() - 0.5) * 0.4
+                    (Math.random() - 0.5) * 0.6,
+                    Math.random() * 0.6,
+                    (Math.random() - 0.5) * 0.6
                 );
             } else if (type === 'smoke') {
                 velocity = new THREE.Vector3(
-                    (Math.random() - 0.5) * 0.1,
-                    0.1 + Math.random() * 0.1,
+                    (Math.random() - 0.5) * 0.15,
+                    0.2 + Math.random() * 0.2,
                     0.2 + Math.random() * 0.1
+                );
+            } else if (type === 'fire') {
+                velocity = new THREE.Vector3(
+                    (Math.random() - 0.5) * 0.1,
+                    0.3 + Math.random() * 0.3,
+                    (Math.random() - 0.5) * 0.1
                 );
             } else if (type === 'trail') {
                 velocity = new THREE.Vector3(
@@ -445,22 +499,30 @@ class ParticleSystem {
                 velocity: velocity,
                 life: 1.0,
                 decay: 0.01 + Math.random() * 0.02,
-                type: type
+                type: type,
+                baseSize: size
             });
             scene.add(p);
         }
     }
+
 
     update() {
         for (let i = this.particles.length - 1; i >= 0; i--) {
             const p = this.particles[i];
             p.mesh.position.add(p.velocity);
             p.life -= p.decay;
-            p.mesh.material.opacity = p.life * (p.type === 'smoke' ? 0.4 : 1.0);
             
             if (p.type === 'smoke') {
-                p.mesh.scale.setScalar(1 + (1 - p.life) * 2);
+                p.mesh.material.opacity = p.life * 0.4;
+                p.mesh.scale.setScalar(1 + (1 - p.life) * 3);
+            } else if (p.type === 'fire') {
+                p.mesh.material.opacity = p.life;
+                p.mesh.scale.setScalar(p.life * 1.5);
+                // Color shift from yellow to red
+                p.mesh.material.color.setHSL(0.02 + p.life * 0.1, 1.0, 0.5);
             } else {
+                p.mesh.material.opacity = p.life;
                 p.mesh.scale.setScalar(p.life);
             }
 
@@ -472,6 +534,7 @@ class ParticleSystem {
             }
         }
     }
+
 }
 
 const particleSystem = new ParticleSystem();
@@ -2711,20 +2774,13 @@ const animate = () => {
             meteor.position.z + velocity.z
         );
 
-        // Animate trail - position particles behind the meteor in direction of travel
-        const normalizedVel = velocity.clone().normalize();
-        meteor.children.forEach((child, i) => {
-            if (child.userData.isTrail) {
-                const offset = child.userData.offset;
-                // Position trail particles opposite to velocity direction (behind the meteor)
-                const trailDist = offset * 0.5;
-                child.position.set(
-                    -normalizedVel.x * trailDist,
-                    -normalizedVel.y * trailDist + Math.sin(Date.now() * 0.01 + offset) * 0.1,
-                    -normalizedVel.z * trailDist
-                );
-            }
-        });
+        // Animate trail with enhanced particles
+        if (Math.random() < 0.5) {
+            const trailPos = meteor.position.clone().sub(velocity.clone().normalize().multiplyScalar(2));
+            particleSystem.create(trailPos, 0xffaa00, 2, 'trail');
+            particleSystem.create(trailPos, 0x555555, 1, 'smoke');
+        }
+
 
         // Check collision with cars first - OBLITERATE them!
         trafficCars.forEach(car => {
@@ -3683,11 +3739,18 @@ const animate = () => {
             }
         }
 
-        // Burning trees take continuous damage
         if (tree.userData.onFire && tree.userData.health > 0) {
             const damage = 0.1;
             tree.userData.health -= damage;
             gameState.totalTreeHealth -= damage;
+
+            // NEW: Emit enhanced fire and smoke particles
+            if (Math.random() < 0.3) {
+                const firePos = tree.position.clone();
+                firePos.y += 2 + Math.random() * 2;
+                particleSystem.create(firePos, 0xff4400, 2, 'fire');
+                particleSystem.create(firePos, 0x333333, 1, 'smoke');
+            }
 
             // Tree dies from fire
             if (tree.userData.health <= 0 && !tree.userData.falling) {
@@ -3742,6 +3805,8 @@ const animate = () => {
         endGame();
     }
 
+    // Finalize matrices and render
+    particleSystem.update();
     renderer.render(scene, camera);
 };
 

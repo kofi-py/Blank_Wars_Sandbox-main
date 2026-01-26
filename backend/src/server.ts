@@ -73,6 +73,7 @@ import interopRouter from './routes/interopRoutes';
 import cardanoRouter from './routes/cardanoRoutes';
 import leaderboardRouter from './routes/leaderboardRoutes';
 import therapyRouter from './routes/therapyRoutes';
+import minigameRouter from './routes/minigameRoutes';
 // import levelUpRouter from './routes/levelUpRoutes'; // ADMIN TESTING - Commented out for production
 import { healing_scheduler } from './services/healingScheduler';
 import { startAutonomousTrashTalkScheduler } from './services/aiTrashTalkService';
@@ -343,6 +344,7 @@ app.use('/api/lost-and-found', lostAndFoundRouter);
 app.use('/api/staking', stakingRouter);
 app.use('/api/v1/interop', interopRouter);
 app.use('/api/cardano', cardanoRouter);
+app.use('/api/minigames', minigameRouter);
 
 // --- Webhook endpoint for LocalAGI (absolute path expected by .env) ---
 app.post('/api/webhook/response', async (req: Request, res: Response) => {
