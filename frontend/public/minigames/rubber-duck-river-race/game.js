@@ -13,6 +13,72 @@ import { SplinePathSystem } from './SplinePathSystem_v2.js';
 // CDN base URL for 3D models
 const MODEL_CDN_BASE = 'https://cdn.jsdelivr.net/gh/Green003-CPAIOS/blank-wars-models@main/minigames/rubber-duck-river-race/';
 
+// Audio Configuration
+const SOUNDS = {
+    music_river: 'assets/sounds/music_river.mp3',
+    splash: 'assets/sounds/splash.mp3',
+    bump: 'assets/sounds/bump.mp3',
+    quack: 'assets/sounds/quack.mp3',
+    eagle: 'assets/sounds/eagle.mp3',
+    victory: 'assets/sounds/victory.wav',
+    gameover: 'assets/sounds/gameover.wav'
+};
+
+
+class SoundManager {
+    constructor() {
+        this.enabled = true;
+        this.music = null;
+    }
+
+    init() {
+        // Setup music
+        this.music = new Audio(SOUNDS.music_river);
+        this.music.loop = true;
+        this.music.volume = 0.2;
+
+        const volumeToggle = document.getElementById('volume-toggle');
+        if (volumeToggle) {
+            volumeToggle.addEventListener('click', () => {
+                this.enabled = !this.enabled;
+                volumeToggle.textContent = this.enabled ? '🔊' : '🔇';
+                this.updateVolume();
+            });
+        }
+    }
+
+    updateVolume() {
+        if (!this.enabled) {
+            if (this.music) this.music.pause();
+        } else {
+            if (this.music && gameState.isPlaying) this.music.play().catch(e => {});
+        }
+    }
+
+    play(name, pitch = 1, volume = 0.5) {
+        if (!this.enabled || !SOUNDS[name]) return;
+        const audio = new Audio(SOUNDS[name]);
+        audio.playbackRate = pitch;
+        audio.volume = volume;
+        audio.play().catch(e => {});
+    }
+
+    startMusic() {
+        if (this.enabled && this.music) {
+            this.music.play().catch(e => {});
+        }
+    }
+
+    stopMusic() {
+        if (this.music) {
+            this.music.pause();
+            this.music.currentTime = 0;
+        }
+    }
+}
+
+const soundManager = new SoundManager();
+
 // Game state
 const gameState = {
     isPlaying: false,
@@ -54,8 +120,11 @@ const gameState = {
     // 🏁 Duck Racing
     position: 1, // Current race position
     totalDucks: 2000, // Total ducks in race
-    duckNumber: null // Player's duck number
+    duckNumber: null, // Player's duck number
+    lastBumpSoundTime: 0,
+    lastQuackSoundTime: 0
 };
+
 
 // Wave physics function - calculates wave height at any point
 const getWaveHeight = (x, z, time) => {
@@ -947,7 +1016,12 @@ const createSplash = (x, y, z, intensity) => {
         scene.add(particle);
         splashParticles.push(particle);
     }
+
+    if (intensity > 0.2) {
+        soundManager.play('splash', 0.8 + Math.random() * 0.4, Math.min(0.3, intensity * 0.2));
+    }
 };
+
 
 // Update splash particles
 const updateSplashParticles = () => {
@@ -1572,7 +1646,14 @@ const updateCompetitorDucks = (deltaTime) => {
             duck1.userData.xPosition += Math.cos(angle) * pushForce;
             duck1.userData.xPosition = Math.max(-8, Math.min(8, duck1.userData.xPosition));
 
+            // Quack!
+            if (Date.now() - gameState.lastQuackSoundTime > 300) {
+                soundManager.play('quack', 0.9 + Math.random() * 0.4, 0.4);
+                gameState.lastQuackSoundTime = Date.now();
+            }
+
             // Push PLAYER duck away too!
+
             gameState.duckPosition -= Math.cos(angle) * pushForce * 0.5; // 50% force on player
             gameState.duckPosition = Math.max(-8, Math.min(8, gameState.duckPosition));
         }
@@ -2571,6 +2652,8 @@ const createCurvedRiverChannel = () => {
 
 // Initialize game
 const init = () => {
+    soundManager.init();
+
     // 🎢 CREATE SPLINE PATH SYSTEM FIRST!
     console.log('==========================================');
     console.log('🎢🎢🎢 GAME INIT STARTING 🎢🎢🎢');
@@ -3091,6 +3174,9 @@ const startGame = () => {
         : 101; // Player is duck #101 (competitors are 1-100)
     console.log(`🦆 Player duck #${gameState.duckNumber}`);
 
+    soundManager.startMusic();
+
+
     gameState.isPlaying = true;
     gameState.health = 100;
     gameState.distance = 15; // Start in MIDDLE of pack (ducks go from 0-30m)
@@ -3174,15 +3260,20 @@ const startGame = () => {
 // End game
 const endGame = () => {
     gameState.isPlaying = false;
+    soundManager.stopMusic();
+
 
     const resultText = document.getElementById('resultText');
     const finalScore = document.getElementById('finalScore');
 
     if (gameState.health <= 0) {
         resultText.textContent = 'Your duck sank!';
+        soundManager.play('gameover');
     } else {
         resultText.textContent = 'Great race!';
+        soundManager.play('victory');
     }
+
 
     // Calculate final time
     const elapsed = Date.now() - gameState.startTime;
@@ -3931,7 +4022,11 @@ const gameLoop = () => {
                         if (gameState.invincibilityFrames <= 0) {
                             gameState.health -= obstacle.userData.damage || 7; // Direct damage, no multiplier
                             gameState.invincibilityFrames = 60; // 1 second of invincibility at 60fps
+                            
+                            soundManager.play('bump', 0.8 + Math.random() * 0.4, 0.6);
+                            
                             console.log(`💥 ROCK HIT! Bumped backward ${backwardBump.toFixed(2)} units - invincible for 1s`);
+
                         } else {
                             console.log(`💫 Hit while invincible (${gameState.invincibilityFrames} frames left)`);
                         }
@@ -3987,6 +4082,8 @@ const gameLoop = () => {
         if (eagle && !eagleHasAttacked && gameState.distance >= 1000 && gameState.distance < 1100) {
             eagleHasAttacked = true;
             eagleAttackTime = Date.now();
+            soundManager.play('eagle', 1.0, 0.8);
+
 
             // Position eagle high and IN FRONT for visible approach (Level 1 - fair warning!)
             const currentT = splinePath.distanceToT(gameState.distance);

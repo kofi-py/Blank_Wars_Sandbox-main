@@ -267,6 +267,25 @@
                 font-size: 35px;
             }
         }
+
+        #volume-toggle {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            width: 50px;
+            height: 50px;
+            background: rgba(255, 255, 255, 0.9);
+            border: 3px solid #1a3a52;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+            cursor: pointer;
+            pointer-events: all;
+            z-index: 1000;
+        }
+
     </style>
 </head>
 <body>
@@ -285,7 +304,10 @@
             TAP UP/W TO GO FASTER
         </div>
 
+        <div id="volume-toggle" title="Toggle Sound">🔊</div>
+
         <div id="hud">
+
             <div class="hud-item">Position: <span id="position">1</span>/<span id="totalDucks">2000</span></div>
             <div class="hud-item">Health: <span id="health">100</span>%</div>
             <div class="hud-item">Distance: <span id="distance">0</span>m</div>
@@ -335,6 +357,6 @@
             }
         }
     </script>
-    <script type="module" src="game.js?v=171"></script>
+    <script type="module" src="game.js?v=172"></script>
 </body>
 </html>
