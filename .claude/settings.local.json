@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:pixabay.com)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:opengameart.org)",
+      "WebFetch(domain:www.soundjay.com)"
+    ]
+  }
+}
